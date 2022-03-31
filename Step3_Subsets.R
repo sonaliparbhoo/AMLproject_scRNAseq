@@ -15,7 +15,7 @@ library(ggplot2)
 library(magrittr)
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-load("scripts/scRNAseq_step2.rds")
+load("scRNAseq_step2.rds")
 
 # set cluster IDs to resolution 1 clustering
 sobj <- SetIdent(sobj, value = "integrated_snn_res.0.8")
