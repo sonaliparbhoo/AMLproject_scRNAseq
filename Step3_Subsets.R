@@ -14,7 +14,7 @@ library(scGate)
 library(ggplot2)
 library(magrittr)
 
-setwd("~/Documents/AML_project/scRNA_AMLproj")
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 load("scripts/scRNAseq_step2.rds")
 
 # set cluster IDs to resolution 1 clustering
