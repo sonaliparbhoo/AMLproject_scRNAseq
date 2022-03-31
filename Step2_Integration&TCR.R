@@ -17,7 +17,7 @@ library(Seurat)
 library(SingleCellExperiment)
 library(scRepertoire)
 
-setwd("~/Documents/AML_project/scRNA_AMLproj")
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 load("scRNAseq_step1.rds")
 
 sobj <- CreateSeuratObject(
