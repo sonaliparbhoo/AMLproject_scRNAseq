@@ -791,421 +791,420 @@ sceCD8 <- readRDS("scripts/sceCD8_AM.rds")
 mean(rowData(sceCD8)$tradeSeq$converged)
    
 rowData(sceCD8)$assocRes <- associationTest(sceCD8, lineages = TRUE, l2fc = log2(2))
-   assocRes <- rowData(sceCD8)$assocRes
-   
-   NRGenes <-  rownames(assocRes)[
-     which(p.adjust(assocRes$pvalue_lineage1_conditionNonRes, "fdr") <= 0.05)
-   ]
-   RGenes <-  rownames(assocRes)[
-     which(p.adjust(assocRes$pvalue_lineage1_conditionRes, "fdr") <= 0.05)
-   ]
-   
-   HDGenes <-  rownames(assocRes)[
-     which(p.adjust(assocRes$pvalue_lineage1_conditionHD, "fdr") <= 0.05)
-   ]
-   
-   length(RGenes)
-   length(NRGenes)
-   length(HDGenes)
-   UpSetR::upset(fromList(list(Res = RGenes, NonRes = NRGenes, HD = HDGenes)))
-   
-   ### based on mean smoother
-   yhatSmooth <- predictSmooth(sceCD8, gene = RGenes, nPoints = 50, tidy = FALSE)
-   heatSmooth <- pheatmap(t(scale(t(yhatSmooth[, 1:50]))),
-                          cluster_cols = FALSE,
-                          show_rownames = FALSE, 
-                          show_colnames = FALSE)
-   
-   ## the hierarchical trees constructed here, can also be used for 
-   ## clustering of the genes according to their average expression pattern.
-   cl <- sort(cutree(heatSmooth$tree_row, k = 6))
-   table(cl)
-   
-   ######Retrieve sceCD8 with UMAP dimred
-   
-   ####To be improved!!
-   
-   
-   ## C7 category is according to gene ontology grouping: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
-   geneSets <- msigdbr(species = "Homo sapiens", category = "C7")
-   ### filter background to only include genes that we assessed.
-   geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
-   
-   genenames <- gsub(".*[.]", "", names(sceCD8))
-   geneSets <- geneSets[geneSets$gene_symbol %in% genenames,]
-   m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
-   stats <- assocRes$waldStat_lineage1_conditionRes
-   names(stats) <- gsub(".*[.]", "", rownames(assocRes))
-   eaRes <- fgsea(pathways = m_list, stats = stats, nperm = 5e4, minSize = 10)
-   
-   ooEA <- order(eaRes$pval, decreasing = FALSE)
-   kable(head(eaRes[ooEA, 1:3], n = 20))
-   
-   #Differential expression between conditions
-   condRes <- conditionTest(sceCD8, l2fc = log2(2))
-   condRes$padj <- p.adjust(condRes$pvalue, "fdr")
-   mean(condRes$padj <= 0.05, na.rm = TRUE)
-   sum(condRes$padj <= 0.05, na.rm = TRUE)
-   
-   conditionGenes <- rownames(condRes)[condRes$padj <= 0.05]
-   conditionGenes <- conditionGenes[!is.na(conditionGenes)]
-   
-   scales <- brewer.pal(3, "Accent")[1:6]
-   
-   # plot genes
-   oo <- order(condRes$waldStat, decreasing = TRUE)
-   
-   # most significant gene
-   p6 <- plotSmoothers(sceCD8, assays(sceCD8)$counts,
-                       gene = rownames(assays(sceCD8)$counts)[oo[1]],
-                       alpha = 1, border = TRUE, curvesCols = scales) +
-     scale_color_manual(values = scales) +
-     ggtitle(rownames(assays(sceCD8)$counts)[oo[3]])
-   p6
-   ### based on mean smoother
-   yhatSmooth <- predictSmooth(sceCD8, gene = conditionGenes, nPoints = 50, tidy = FALSE) %>%
-     log1p()
-   
-   yhatSmoothScaled <- t(apply(yhatSmooth,1, scales::rescale))
-   heatSmooth <- pheatmap(yhatSmoothScaled[, 51:100],
-                          cluster_cols = FALSE,
-                          show_rownames = FALSE, show_colnames = FALSE, legend = FALSE,
-                          silent = TRUE
-   )
-   matchingHeatmap <- pheatmap(yhatSmoothScaled[heatSmooth$tree_row$order, 1:50],
-                               cluster_cols = FALSE, cluster_rows = FALSE,
-                               show_rownames = FALSE, show_colnames = FALSE, main = "",
-                               legend = FALSE, silent = TRUE 
-   )
-   
-   p9 <- plot_grid(heatSmooth_TGF[[4]], matchingHeatmap_mock[[4]], ncol = 2)
-   p9
-   
-   #Velocity using velocyto.R
-   #Load in the files
-   ld.list <- list.files("velocity", pattern = "loom", all.files = TRUE)
-   ld <- lapply(ld.list, function(x){
-     ReadVelocity(paste0("velocity/", x))
-   })
-   
-   ld.list <- gsub(".loom", "_", ld.list)
-   
-   #Rename colnames for each object according to the colnames of the integrated Seurat object
-   so <- lapply(ld, as.Seurat)
-   so <- lapply(so, function(x) RenameCells(x, new.names = gsub("x", "-1", colnames(x)), for.merge = T))
-   so <- lapply(so, function(x) RenameCells(x, new.names = gsub(".*:", "", colnames(x)), for.merge = T))
-   so <-  lapply(seq_along(ld.list), function(y) RenameCells(so[[y]], new.names = paste0(ld.list[[y]], colnames(so[[y]]))))
-   
-   #Merge the objects
-   som <- merge(so[[1]], so[-(1)], merge.data = TRUE)
-   
-   # Extract only the intersection
-   som <- som[, intersect(colnames(CD8), colnames(som[, colnames(CD8)]))] # This works
-   
-   #Create the specific assays
-   spliced <- CreateAssayObject(GetAssayData(som, assay = "spliced"))
-   unspliced <- CreateAssayObject(GetAssayData(som, assay = "unspliced"))
-   ambiguous <- CreateAssayObject(GetAssayData(som, assay = "ambiguous"))
-   
-   #Import the assays in the original Seurat object
-   CD8[["spliced"]] <- spliced
-   CD8[["unspliced"]] <- unspliced
-   CD8[["ambiguous"]] <- ambiguous
-   
-   CD8 <- RunVelocity(CD8, deltaT = 1, kCells = 25, fit.quantile = 0.02)
-   ident.colors <- (scales::hue_pal())(n = length(x = levels(x = CD8)))
-   names(x = ident.colors) <- levels(x = CD8)
-   cell.colors <- ident.colors[Idents(object = CD8)]
-   names(x = cell.colors) <- colnames(x = CD8)
-   par(mar=c(1,1,1,1))
-   show.velocity.on.embedding.cor(emb = Embeddings(object = CD8, reduction = "umap"), vel = Tool(object = CD8, 
-                                                                                                 slot = "RunVelocity"), n = 200, scale = "sqrt", cell.colors = ac(x = cell.colors, alpha = 0.5), 
-                                  cex = 0.8, arrow.scale = 3, show.grid.flow = TRUE, min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1, 
-                                  do.par = FALSE, cell.border.alpha = 0.1)
-   
-   #Running velocity using scvelo
-   #bash
-   #pip install -U scvelo
-   
-   # bash
-   #conda activate r-velocity
-   #python
-   #>>> import scvelo as scv
-   
-   use_condaenv("r-velocity", required = TRUE)
-   scv <- import("scvelo")
-   
-   #Assign the spliced assay to the RNA assay and put it as default
-   CD8[['RNA']] <- CD8[["spliced"]]
-   DefaultAssay(CD8) <- "RNA"
-   
-   #save seurat and convert into h5ad
-   SaveH5Seurat(CD8, filename = "CD8scv.h5Seurat")
-   Convert("CD8scv.h5Seurat", dest = "h5ad")
-   
-   #read the h5ad file
-   adata <- scv$read("CD8scv.h5ad")
-   adata #check the adata file
-   
-   ## get embedding
-   emb <- data.frame(adata$obsm['X_umap'])
-   clusters <- CD8@active.ident
-   rownames(emb) <- names(clusters)
-   
-   ## get jackbibby1.github.io/SCPA/clusters, convert to colors
-   col <- rainbow(length(levels(clusters)), s=0.8, v=0.8)
-   cell.cols <- col[clusters]
-   names(cell.cols) <- names(clusters)
-   
-   ## simple plot
-   par(mar=c(1,1,1,1))
-   plot(emb, col=cell.cols, pch=16,
-        xlab='UMAP X', ylab='UMAP Y')
-   legend(x=4, y=-3.4, 
-          legend=levels(clusters),
-          col=col, 
-          pch=16)
-   
-   ## run scvelo dynamic model
-   scv$pp$filter_and_normalize(adata, min_shared_counts=20)
-   scv$pp$moments(adata, method='hnsw') ## normalize and compute moments
-   scv$tl$recover_dynamics(adata) ## model
-   scv$tl$velocity(adata, mode = 'dynamical')
-   scv$tl$velocity_graph(adata)
-   
-   #adata$write('data/scvelo.h5ad', compression='gzip')
-   #adata = scv$read('data/scvelo.h5ad')
-   
-   scv$pl$velocity_embedding_stream(adata, basis="umap", color = "seurat_clusters")
-   
-   #calculate latent time
-   scv$tl$latent_time(adata)
-   scv$pl$scatter(adata, color='latent_time', color_map='gnuplot', size=80)
-   
-   
-   #Dyno trajectories metabolism
-   df <- as.matrix(CD8[["RNA"]]@data)
-   var_genes <- names(sort(apply(df, 1, var), decreasing = TRUE))[1:1000]
-   
-   counts <- Matrix::t(as(as.matrix(CD8@assays$RNA@counts[var_genes,]), 'sparseMatrix'))
-   expression <- Matrix::t(as(as.matrix(CD8@assays$RNA@data[var_genes,]), 'sparseMatrix'))
-   
-   ds <- wrap_expression(expression = expression,
-                         counts = counts)
-   model <- infer_trajectory(ds, dimred = "umap", method = dynmethods::ti_slingshot(),  verbose = T)
-   
-   model <- model %>% 
-     add_dimred(dimred = as.matrix(CD8@reductions$umap@cell.embeddings),
-                expression_source = ds$expression)
-   
-   plot_dimred(model, expression_source = ds$expression, )
-   
-   
-   plot_dimred(model,
-               "pseudotime", 
-               expression_source = ds$expression,
-               pseudotime = calculate_pseudotime(model), 
-               hex_cells = F,
-               plot_trajectory = T, 
-               size_cells = 1, alpha_cells = 0.8) + 
-     theme(aspect.ratio = 1)
-   
-   plot_dimred(model, 
-               expression_source = ds$expression,
-               grouping = group_onto_nearest_milestones(model), 
-               hex_cells = F,
-               plot_trajectory = T, 
-               size_cells = 1, alpha_cells = 0.8) + 
-     theme(aspect.ratio = 1)
-   
-   mile_group <- data.frame(group_onto_nearest_milestones(model)) %>%
-     set_colnames("milestone") %>%
-     rownames_to_column("cell")
-   CD8$milestone <- mile_group$milestone
-   CD8_pseudo <- list()
-   for (i in 1:max(mile_group$milestone)) {
-     CD8_pseudo[[i]] <- seurat_extract(CD8, meta1 = "milestone", value_meta1 = i)
-   }
-   
-   pathways <- "combined_metabolic_pathways.csv"
-   
-   CD8_meta <- compare_pathways(samples = CD8_pseudo, 
-                                pathways = pathways)
-   
-   #Clonotype analysis
-   #Delete HD (we have VDJ only for responders and nonresponders)
-   CD8 <- subset(CD8, group_id == c("Res", "NonRes"))
-   
-   CD8@meta.data$cloneType <- factor(CD8@meta.data$cloneType, levels = c("Hyperexpanded (100 < X <= 500)", "Large (20 < X <= 100)", "Medium (5 < X <= 20)", "Small (1 < X <= 5)", "Single (0 < X <= 1)", NA))
-   colorblind_vector <- colorRampPalette(c("#FF4B20", "#FFB433", "#C6FDEC", "#7AC5FF", "#0348A6"))
-   DimPlot(CD8, group.by = "cloneType", split.by = "group_id") + scale_color_manual(values = c(colorblind_vector(5)), na.value="grey")
-   TCD8 <- expression2List(CD8, group = "cluster")
-   Samples <- expression2List(CD8, group = "RespTmp")
-   
-   p229 <- subset(CD8, orig.ident == "p229")
-   p229 <- expression2List(p229, group = "cluster")
-   
-   p219 <- subset(CD8, orig.ident == "p219")
-   p219 <- expression2List(p219, group = "cluster")
-   
-   p264 <- subset(CD8, orig.ident == "p264")
-   p264 <- expression2List(p264, group = "cluster")
-   
-   pV03 <- subset(CD8, orig.ident == "pV03")
-   pV03 <- expression2List(pV03, group = "cluster")
-   
-   pV09 <- subset(CD8, orig.ident == "pV09")
-   pV09 <- expression2List(pV09, group = "cluster")
-   
-   clonalProportion(p229, cloneCall = "gene+nt")
-   clonalProportion(p219, cloneCall = "gene+nt")
-   clonalProportion(p264, cloneCall = "gene+nt")
-   clonalProportion(pV03, cloneCall = "gene+nt")
-   clonalProportion(pV09, cloneCall = "gene+nt")
-   
-   tiff("./pipelines/plots/clono.tiff", width = 5*10, height = 5*10, res = 300, pointsize = 5)     
-   compareClonotypes(p229, numbers = 15, 
-                     cloneCall="gene+nt", graph = "alluvial")
-   compareClonotypes(p219, numbers = 15, 
-                     cloneCall="gene+nt", graph = "alluvial")
-   compareClonotypes(p264, numbers = 15, 
-                     cloneCall="gene+nt", graph = "alluvial")
-   compareClonotypes(pV03, numbers = 15, 
-                     cloneCall="gene+nt", graph = "alluvial")
-   compareClonotypes(pV09, numbers = 15, 
-                     cloneCall="gene+nt", graph = "alluvial")
-   
-   quantContig(TCD8, cloneCall="gene+nt", scale = T) + guides(fill = F)
-   quantContig(Samples, cloneCall="gene+nt", scale = TRUE) + guides(fill = F)
-   
-   clonalHomeostasis(TCD8, cloneCall = "gene+nt")
-   clonalProportion(TCD8, cloneCall = "gene+nt")
-   
-   clonalOverlap(TCD8, cloneCall = "gene+nt", method = "morisita") + 
-     scale_fill_gradientn(colors = rev(colorblind_vector(11)), na.value = "white")
-   
-   clonalOverlap(TCD8, cloneCall = "gene+nt", method = "overlap") + 
-     scale_fill_gradientn(colors = rev(colorblind_vector(11)), na.value = "white")
-   
-   clonalDiversity(CD8, cloneCall = "gene+nt", group = "cluster")
-   
-   clonalDiversity(CD8, cloneCall = "gene+nt", group = "RespTmp")
-   
-   tiff("./plots/clonoDivClus.tiff", width = 5*1500, height = 5*800, res = 300, pointsize = 5)     
-   clonalDiversity(CD8, cloneCall = "gene+nt", group.by = "RespTmp",
-                   x.axis = "cluster", n.boots = 100)
-   dev.off()
-   
-   alluvialClonotypes(CD8, cloneCall = "gene", 
-                      y.axes = c("cluster", "group_id"), 
-                      color = "cluster") 
-   
-   CD8@meta.data$cluster_id <- CD8@active.ident
-   
-   
-   
-   tiff("./plots/clonoUMAP.tiff", width = 5*500, height = 5*300, res = 300, pointsize = 5)     
-   p <- clonalOverlay(CD8, reduction = "umap", 
-                      freq.cutpoint = 30, bins = 10, facet = "group_id") + 
-     guides(color = FALSE) 
-   p
-   dev.off()
-   
-   
-   library(RColorBrewer)
-   cols<- brewer.pal(5, "Reds")
-   pal <- colorRampPalette(cols)
-   
-   slot(CD8, "meta.data")$cloneType <- factor(slot(CD8, "meta.data")$cloneType, 
-                                              levels = c(NA, "Single (0 < X <= 1)", 
-                                                         "Small (1 < X <= 5)",
-                                                         "Medium (5 < X <= 20)",
-                                                         "Large (20 < X <= 100)",
-                                                         "Hyperexpanded (100 < X <= 500)"))
-   
-   table(CD8@meta.data$cloneType, CD8@active.ident)
-   meta <- melt(table(CD8@meta.data[!is.na(CD8@meta.data$Frequency),
-                                    c("functional.cluster", "cloneType")]), varnames = c("functional.cluster", "cloneType"))
-   ggplot(data = meta, aes(x = CD8@active.ident, y = value, fill = cloneType)) + geom_bar(stat = "identity") +
-     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + scale_fill_manual(values = c(palette(5)),
-                                                                                               na.value = "grey")
-   
-   
-   CD8_split <- SplitObject(CD8, split.by = "group_id")
-   CD8_R <- CD8_split$Res
-   CD8_NR <- CD8_split$NonRes
-   
-   
-   
-   mark_res <- FindAllMarkers(CD8_R)
-   mark_nr <- FindAllMarkers(CD8_NR)
-   mark_res %>%
-     group_by(cluster) %>%
-     top_n(n = 20, wt = avg_log2FC) -> top20
-   
-   mark %>%
-     group_by(cluster) %>%
-     top_n(n = 20, wt = avg_log2FC) -> top20
-   
-   tiff("./plots/DoHeat1.tiff", width = 5*400, height = 5*500, res = 150, pointsize = 5)     
-   DoHeatmap(object = CD8_R, features = top20$gene, size = 8, label = FALSE) + 
-     scale_fill_gradientn(colors = c("blue", "white", "red")) + 
-     theme(text = element_text(size = 14)) + ggtitle("Top 20")
-   dev.off()
-   
-   tiff("./plots/DoHeatNR.tiff", width = 5*400, height = 5*500, res = 150, pointsize = 5)     
-   DoHeatmap(object = CD8_NR,  group.by = "cloneType", features = top20$gene, size = 8, label = FALSE) + 
-     scale_fill_gradientn(colors = c("blue", "white", "red")) + 
-     theme(text = element_text(size = 14)) + ggtitle("Top 20")
-   dev.off()
-   
-   # get log normalized values for top 50 variable genes
-   to_plot <- GetAssayData(CD8_R, slot = "data")[top20$gene, ]
-   
-   cluster_anno<- CD8@meta.data$cloneType
-   
-   
-   Heatmap(as.matrix(to_plot),
-           show_column_names = TRUE)
-   
-   
-   comb2 <- expression2List(CD8, split.by = "cluster")
-   
-   length(comb2) 
-   
-   tiff("./plots/diversity.tiff", width = 5*350, height = 5*300, res = 300, pointsize = 5)     
-   clonalDiversity(comb2, cloneCall = "nt")
-   dev.off()
-   library(scRepertoire)
-   
-   CD8_list <- SplitObject(CD8, split.by = "group_id")
-   
-   tiff("./plots/occupiedResp.tiff", width = 5*450, height = 5*150, res = 300, pointsize = 5)     
-   occupiedscRepertoire(CD8_list$Res, x.axis = "cluster") 
-   dev.off()
-   
-   tiff("./plots/occupiedNonResp.tiff", width = 5*450, height = 5*150, res = 300, pointsize = 5)     
-   occupiedscRepertoire(CD8_list$NonRes, x.axis = "cluster") 
-   dev.off()
-   
-   #ggraph needs to be loaded due to issues with ggplot
-   library(ggraph)
-   
-   clonalHomeostasis(comb2, cloneCall = "nt")
-   clonalProportion(comb2, cloneCall = "nt")
-   
-   tiff("./plots/overlap.tiff", width = 5*350, height = 5*300, res = 300, pointsize = 5)     
-   clonalOverlap(comb2, cloneCall="aa", method="overlap")
-   dev.off()
-   
-   save(list = ls(), file ="scRNAseq_CD8_step4.rds")
-   load("scRNAseq_CD8_step4.rds")
-   
-   
-   save(CD8, model, file = "CD8.rds")
-   load("CD8.rds")
-   
-   
-   
-   
-   
+assocRes <- rowData(sceCD8)$assocRes
+
+NRGenes <-  rownames(assocRes)[
+  which(p.adjust(assocRes$pvalue_lineage1_conditionNonRes, "fdr") <= 0.05)
+]
+RGenes <-  rownames(assocRes)[
+  which(p.adjust(assocRes$pvalue_lineage1_conditionRes, "fdr") <= 0.05)
+]
+
+HDGenes <-  rownames(assocRes)[
+  which(p.adjust(assocRes$pvalue_lineage1_conditionHD, "fdr") <= 0.05)
+]
+
+length(RGenes)
+length(NRGenes)
+length(HDGenes)
+UpSetR::upset(fromList(list(Res = RGenes, NonRes = NRGenes, HD = HDGenes)))
+
+### based on mean smoother
+yhatSmooth <- predictSmooth(sceCD8, gene = RGenes, nPoints = 50, tidy = FALSE)
+heatSmooth <- pheatmap(t(scale(t(yhatSmooth[, 1:50]))),
+                       cluster_cols = FALSE,
+                       show_rownames = FALSE, 
+                       show_colnames = FALSE)
+
+## the hierarchical trees constructed here, can also be used for 
+## clustering of the genes according to their average expression pattern.
+cl <- sort(cutree(heatSmooth$tree_row, k = 6))
+table(cl)
+
+######Retrieve sceCD8 with UMAP dimred
+
+####To be improved!!
+
+
+## C7 category is according to gene ontology grouping: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C7")
+### filter background to only include genes that we assessed.
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+
+genenames <- gsub(".*[.]", "", names(sceCD8))
+geneSets <- geneSets[geneSets$gene_symbol %in% genenames,]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+stats <- assocRes$waldStat_lineage1_conditionRes
+names(stats) <- gsub(".*[.]", "", rownames(assocRes))
+eaRes <- fgsea(pathways = m_list, stats = stats, nperm = 5e4, minSize = 10)
+
+ooEA <- order(eaRes$pval, decreasing = FALSE)
+kable(head(eaRes[ooEA, 1:3], n = 20))
+
+#Differential expression between conditions
+condRes <- conditionTest(sceCD8, l2fc = log2(2))
+condRes$padj <- p.adjust(condRes$pvalue, "fdr")
+mean(condRes$padj <= 0.05, na.rm = TRUE)
+sum(condRes$padj <= 0.05, na.rm = TRUE)
+
+conditionGenes <- rownames(condRes)[condRes$padj <= 0.05]
+conditionGenes <- conditionGenes[!is.na(conditionGenes)]
+
+scales <- brewer.pal(3, "Accent")[1:6]
+
+# plot genes
+oo <- order(condRes$waldStat, decreasing = TRUE)
+
+# most significant gene
+p6 <- plotSmoothers(sceCD8, assays(sceCD8)$counts,
+                    gene = rownames(assays(sceCD8)$counts)[oo[1]],
+                    alpha = 1, border = TRUE, curvesCols = scales) +
+  scale_color_manual(values = scales) +
+  ggtitle(rownames(assays(sceCD8)$counts)[oo[3]])
+p6
+### based on mean smoother
+yhatSmooth <- predictSmooth(sceCD8, gene = conditionGenes, nPoints = 50, tidy = FALSE) %>%
+  log1p()
+
+yhatSmoothScaled <- t(apply(yhatSmooth,1, scales::rescale))
+heatSmooth <- pheatmap(yhatSmoothScaled[, 51:100],
+                       cluster_cols = FALSE,
+                       show_rownames = FALSE, show_colnames = FALSE, legend = FALSE,
+                       silent = TRUE
+)
+matchingHeatmap <- pheatmap(yhatSmoothScaled[heatSmooth$tree_row$order, 1:50],
+                            cluster_cols = FALSE, cluster_rows = FALSE,
+                            show_rownames = FALSE, show_colnames = FALSE, main = "",
+                            legend = FALSE, silent = TRUE 
+)
+
+p9 <- plot_grid(heatSmooth_TGF[[4]], matchingHeatmap_mock[[4]], ncol = 2)
+p9
+
+#Velocity using velocyto.R
+#Load in the files
+ld.list <- list.files("velocity", pattern = "loom", all.files = TRUE)
+ld <- lapply(ld.list, function(x){
+  ReadVelocity(paste0("velocity/", x))
+})
+
+ld.list <- gsub(".loom", "_", ld.list)
+
+#Rename colnames for each object according to the colnames of the integrated Seurat object
+so <- lapply(ld, as.Seurat)
+so <- lapply(so, function(x) RenameCells(x, new.names = gsub("x", "-1", colnames(x)), for.merge = T))
+so <- lapply(so, function(x) RenameCells(x, new.names = gsub(".*:", "", colnames(x)), for.merge = T))
+so <-  lapply(seq_along(ld.list), function(y) RenameCells(so[[y]], new.names = paste0(ld.list[[y]], colnames(so[[y]]))))
+
+#Merge the objects
+som <- merge(so[[1]], so[-(1)], merge.data = TRUE)
+
+# Extract only the intersection
+som <- som[, intersect(colnames(CD8), colnames(som[, colnames(CD8)]))] # This works
+
+#Create the specific assays
+spliced <- CreateAssayObject(GetAssayData(som, assay = "spliced"))
+unspliced <- CreateAssayObject(GetAssayData(som, assay = "unspliced"))
+ambiguous <- CreateAssayObject(GetAssayData(som, assay = "ambiguous"))
+
+#Import the assays in the original Seurat object
+CD8[["spliced"]] <- spliced
+CD8[["unspliced"]] <- unspliced
+CD8[["ambiguous"]] <- ambiguous
+
+CD8 <- RunVelocity(CD8, deltaT = 1, kCells = 25, fit.quantile = 0.02)
+ident.colors <- (scales::hue_pal())(n = length(x = levels(x = CD8)))
+names(x = ident.colors) <- levels(x = CD8)
+cell.colors <- ident.colors[Idents(object = CD8)]
+names(x = cell.colors) <- colnames(x = CD8)
+par(mar=c(1,1,1,1))
+show.velocity.on.embedding.cor(emb = Embeddings(object = CD8, reduction = "umap"), vel = Tool(object = CD8, 
+                                                                                              slot = "RunVelocity"), n = 200, scale = "sqrt", cell.colors = ac(x = cell.colors, alpha = 0.5), 
+                               cex = 0.8, arrow.scale = 3, show.grid.flow = TRUE, min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1, 
+                               do.par = FALSE, cell.border.alpha = 0.1)
+
+#Running velocity using scvelo
+#bash
+#pip install -U scvelo
+
+# bash
+#conda activate r-velocity
+#python
+#>>> import scvelo as scv
+
+use_condaenv("r-velocity", required = TRUE)
+scv <- import("scvelo")
+
+#Assign the spliced assay to the RNA assay and put it as default
+CD8[['RNA']] <- CD8[["spliced"]]
+DefaultAssay(CD8) <- "RNA"
+
+#save seurat and convert into h5ad
+SaveH5Seurat(CD8, filename = "CD8scv.h5Seurat")
+Convert("CD8scv.h5Seurat", dest = "h5ad")
+
+#read the h5ad file
+adata <- scv$read("CD8scv.h5ad")
+adata #check the adata file
+
+## get embedding
+emb <- data.frame(adata$obsm['X_umap'])
+clusters <- CD8@active.ident
+rownames(emb) <- names(clusters)
+
+## get jackbibby1.github.io/SCPA/clusters, convert to colors
+col <- rainbow(length(levels(clusters)), s=0.8, v=0.8)
+cell.cols <- col[clusters]
+names(cell.cols) <- names(clusters)
+
+## simple plot
+par(mar=c(1,1,1,1))
+plot(emb, col=cell.cols, pch=16,
+     xlab='UMAP X', ylab='UMAP Y')
+legend(x=4, y=-3.4, 
+       legend=levels(clusters),
+       col=col, 
+       pch=16)
+
+## run scvelo dynamic model
+scv$pp$filter_and_normalize(adata, min_shared_counts=20)
+scv$pp$moments(adata, method='hnsw') ## normalize and compute moments
+scv$tl$recover_dynamics(adata) ## model
+scv$tl$velocity(adata, mode = 'dynamical')
+scv$tl$velocity_graph(adata)
+
+#adata$write('data/scvelo.h5ad', compression='gzip')
+#adata = scv$read('data/scvelo.h5ad')
+
+scv$pl$velocity_embedding_stream(adata, basis="umap", color = "seurat_clusters")
+
+#calculate latent time
+scv$tl$latent_time(adata)
+scv$pl$scatter(adata, color='latent_time', color_map='gnuplot', size=80)
+
+
+#Dyno trajectories metabolism
+df <- as.matrix(CD8[["RNA"]]@data)
+var_genes <- names(sort(apply(df, 1, var), decreasing = TRUE))[1:1000]
+
+counts <- Matrix::t(as(as.matrix(CD8@assays$RNA@counts[var_genes,]), 'sparseMatrix'))
+expression <- Matrix::t(as(as.matrix(CD8@assays$RNA@data[var_genes,]), 'sparseMatrix'))
+
+ds <- wrap_expression(expression = expression,
+                      counts = counts)
+model <- infer_trajectory(ds, dimred = "umap", method = dynmethods::ti_slingshot(),  verbose = T)
+
+model <- model %>% 
+  add_dimred(dimred = as.matrix(CD8@reductions$umap@cell.embeddings),
+             expression_source = ds$expression)
+
+plot_dimred(model, expression_source = ds$expression, )
+
+
+plot_dimred(model,
+            "pseudotime", 
+            expression_source = ds$expression,
+            pseudotime = calculate_pseudotime(model), 
+            hex_cells = F,
+            plot_trajectory = T, 
+            size_cells = 1, alpha_cells = 0.8) + 
+  theme(aspect.ratio = 1)
+
+plot_dimred(model, 
+            expression_source = ds$expression,
+            grouping = group_onto_nearest_milestones(model), 
+            hex_cells = F,
+            plot_trajectory = T, 
+            size_cells = 1, alpha_cells = 0.8) + 
+  theme(aspect.ratio = 1)
+
+mile_group <- data.frame(group_onto_nearest_milestones(model)) %>%
+  set_colnames("milestone") %>%
+  rownames_to_column("cell")
+CD8$milestone <- mile_group$milestone
+CD8_pseudo <- list()
+for (i in 1:max(mile_group$milestone)) {
+  CD8_pseudo[[i]] <- seurat_extract(CD8, meta1 = "milestone", value_meta1 = i)
+}
+
+pathways <- "combined_metabolic_pathways.csv"
+
+CD8_meta <- compare_pathways(samples = CD8_pseudo, 
+                             pathways = pathways)
+
+#Clonotype analysis
+#Delete HD (we have VDJ only for responders and nonresponders)
+CD8 <- subset(CD8, group_id == c("Res", "NonRes"))
+
+CD8@meta.data$cloneType <- factor(CD8@meta.data$cloneType, levels = c("Hyperexpanded (100 < X <= 500)", "Large (20 < X <= 100)", "Medium (5 < X <= 20)", "Small (1 < X <= 5)", "Single (0 < X <= 1)", NA))
+colorblind_vector <- colorRampPalette(c("#FF4B20", "#FFB433", "#C6FDEC", "#7AC5FF", "#0348A6"))
+DimPlot(CD8, group.by = "cloneType", split.by = "group_id") + scale_color_manual(values = c(colorblind_vector(5)), na.value="grey")
+TCD8 <- expression2List(CD8, group = "cluster")
+Samples <- expression2List(CD8, group = "RespTmp")
+
+p229 <- subset(CD8, orig.ident == "p229")
+p229 <- expression2List(p229, group = "cluster")
+
+p219 <- subset(CD8, orig.ident == "p219")
+p219 <- expression2List(p219, group = "cluster")
+
+p264 <- subset(CD8, orig.ident == "p264")
+p264 <- expression2List(p264, group = "cluster")
+
+pV03 <- subset(CD8, orig.ident == "pV03")
+pV03 <- expression2List(pV03, group = "cluster")
+
+pV09 <- subset(CD8, orig.ident == "pV09")
+pV09 <- expression2List(pV09, group = "cluster")
+
+clonalProportion(p229, cloneCall = "gene+nt")
+clonalProportion(p219, cloneCall = "gene+nt")
+clonalProportion(p264, cloneCall = "gene+nt")
+clonalProportion(pV03, cloneCall = "gene+nt")
+clonalProportion(pV09, cloneCall = "gene+nt")
+
+tiff("./pipelines/plots/clono.tiff", width = 5*10, height = 5*10, res = 300, pointsize = 5)     
+compareClonotypes(p229, numbers = 15, 
+                  cloneCall="gene+nt", graph = "alluvial")
+compareClonotypes(p219, numbers = 15, 
+                  cloneCall="gene+nt", graph = "alluvial")
+compareClonotypes(p264, numbers = 15, 
+                  cloneCall="gene+nt", graph = "alluvial")
+compareClonotypes(pV03, numbers = 15, 
+                  cloneCall="gene+nt", graph = "alluvial")
+compareClonotypes(pV09, numbers = 15, 
+                  cloneCall="gene+nt", graph = "alluvial")
+
+quantContig(TCD8, cloneCall="gene+nt", scale = T) + guides(fill = F)
+quantContig(Samples, cloneCall="gene+nt", scale = TRUE) + guides(fill = F)
+
+clonalHomeostasis(TCD8, cloneCall = "gene+nt")
+clonalProportion(TCD8, cloneCall = "gene+nt")
+
+clonalOverlap(TCD8, cloneCall = "gene+nt", method = "morisita") + 
+  scale_fill_gradientn(colors = rev(colorblind_vector(11)), na.value = "white")
+
+clonalOverlap(TCD8, cloneCall = "gene+nt", method = "overlap") + 
+  scale_fill_gradientn(colors = rev(colorblind_vector(11)), na.value = "white")
+
+clonalDiversity(CD8, cloneCall = "gene+nt", group = "cluster")
+
+clonalDiversity(CD8, cloneCall = "gene+nt", group = "RespTmp")
+
+tiff("./plots/clonoDivClus.tiff", width = 5*1500, height = 5*800, res = 300, pointsize = 5)     
+clonalDiversity(CD8, cloneCall = "gene+nt", group.by = "RespTmp",
+                x.axis = "cluster", n.boots = 100)
+dev.off()
+
+alluvialClonotypes(CD8, cloneCall = "gene", 
+                   y.axes = c("cluster", "group_id"), 
+                   color = "cluster") 
+
+CD8@meta.data$cluster_id <- CD8@active.ident
+
+
+
+tiff("./plots/clonoUMAP.tiff", width = 5*500, height = 5*300, res = 300, pointsize = 5)     
+p <- clonalOverlay(CD8, reduction = "umap", 
+                   freq.cutpoint = 30, bins = 10, facet = "group_id") + 
+  guides(color = FALSE) 
+p
+dev.off()
+
+
+library(RColorBrewer)
+cols<- brewer.pal(5, "Reds")
+pal <- colorRampPalette(cols)
+
+slot(CD8, "meta.data")$cloneType <- factor(slot(CD8, "meta.data")$cloneType, 
+                                           levels = c(NA, "Single (0 < X <= 1)", 
+                                                      "Small (1 < X <= 5)",
+                                                      "Medium (5 < X <= 20)",
+                                                      "Large (20 < X <= 100)",
+                                                      "Hyperexpanded (100 < X <= 500)"))
+
+table(CD8@meta.data$cloneType, CD8@active.ident)
+meta <- melt(table(CD8@meta.data[!is.na(CD8@meta.data$Frequency),
+                                 c("functional.cluster", "cloneType")]), varnames = c("functional.cluster", "cloneType"))
+ggplot(data = meta, aes(x = CD8@active.ident, y = value, fill = cloneType)) + geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + scale_fill_manual(values = c(palette(5)),
+                                                                                            na.value = "grey")
+
+
+CD8_split <- SplitObject(CD8, split.by = "group_id")
+CD8_R <- CD8_split$Res
+CD8_NR <- CD8_split$NonRes
+
+
+
+mark_res <- FindAllMarkers(CD8_R)
+mark_nr <- FindAllMarkers(CD8_NR)
+mark_res %>%
+  group_by(cluster) %>%
+  top_n(n = 20, wt = avg_log2FC) -> top20
+
+mark %>%
+  group_by(cluster) %>%
+  top_n(n = 20, wt = avg_log2FC) -> top20
+
+tiff("./plots/DoHeat1.tiff", width = 5*400, height = 5*500, res = 150, pointsize = 5)     
+DoHeatmap(object = CD8_R, features = top20$gene, size = 8, label = FALSE) + 
+  scale_fill_gradientn(colors = c("blue", "white", "red")) + 
+  theme(text = element_text(size = 14)) + ggtitle("Top 20")
+dev.off()
+
+tiff("./plots/DoHeatNR.tiff", width = 5*400, height = 5*500, res = 150, pointsize = 5)     
+DoHeatmap(object = CD8_NR,  group.by = "cloneType", features = top20$gene, size = 8, label = FALSE) + 
+  scale_fill_gradientn(colors = c("blue", "white", "red")) + 
+  theme(text = element_text(size = 14)) + ggtitle("Top 20")
+dev.off()
+
+# get log normalized values for top 50 variable genes
+to_plot <- GetAssayData(CD8_R, slot = "data")[top20$gene, ]
+
+cluster_anno<- CD8@meta.data$cloneType
+
+
+Heatmap(as.matrix(to_plot),
+        show_column_names = TRUE)
+
+
+comb2 <- expression2List(CD8, split.by = "cluster")
+
+length(comb2) 
+
+tiff("./plots/diversity.tiff", width = 5*350, height = 5*300, res = 300, pointsize = 5)     
+clonalDiversity(comb2, cloneCall = "nt")
+dev.off()
+library(scRepertoire)
+
+CD8_list <- SplitObject(CD8, split.by = "group_id")
+
+tiff("./plots/occupiedResp.tiff", width = 5*450, height = 5*150, res = 300, pointsize = 5)     
+occupiedscRepertoire(CD8_list$Res, x.axis = "cluster") 
+dev.off()
+
+tiff("./plots/occupiedNonResp.tiff", width = 5*450, height = 5*150, res = 300, pointsize = 5)     
+occupiedscRepertoire(CD8_list$NonRes, x.axis = "cluster") 
+dev.off()
+
+#ggraph needs to be loaded due to issues with ggplot
+library(ggraph)
+
+clonalHomeostasis(comb2, cloneCall = "nt")
+clonalProportion(comb2, cloneCall = "nt")
+
+tiff("./plots/overlap.tiff", width = 5*350, height = 5*300, res = 300, pointsize = 5)     
+clonalOverlap(comb2, cloneCall="aa", method="overlap")
+dev.off()
+
+save(list = ls(), file ="scRNAseq_CD8_step4.rds")
+load("scRNAseq_CD8_step4.rds")
+
+
+save(CD8, model, file = "CD8.rds")
+load("CD8.rds")
+
+
+
+
