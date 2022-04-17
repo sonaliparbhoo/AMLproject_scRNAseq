@@ -500,70 +500,56 @@ rm(list=setdiff(ls(), "CD8")
    #geom_jitter() +
    #ggtitle ("Timepoint vs. DPT")
 #TRAJECTORY INFERENCE using Slingshot
-sds <- slingshot(Embeddings(CD8, "umap"), clusterLabels = CD8@active.ident, 
-                allow.breaks = TRUE, stretch = 2, reducedDim = "umap", start.clus = "Naive") #Calcualting the trajectory
+clusterLabels <- CD8@active.ident
+sceCD8 <- as.SingleCellExperiment(CD8, assay = "RNA")
+sds <- slingshot(sceCD8, clusterLabels = clusterLabels, 
+                 allow.breaks = TRUE, stretch = 2, reducedDim = "UMAP", start.clus = "Naive") #Calcualting the trajectory
 sds <- SlingshotDataSet(sds)
-   
-#Change palette
-cell_pal <- function(cell_vars, pal_fun,...) {
- if (is.numeric(cell_vars)) {
-   pal <- pal_fun(100, ...)
-   return(pal[cut(cell_vars, breaks = 100)])
- } else {
-   categories <- sort(unique(cell_vars))
-   pal <- setNames(pal_fun(length(categories), ...), categories)
-   return(pal[cell_vars])
- }
-}
    
 #Create dataframe pseudotimes
 pt <- as.data.frame(slingPseudotime(sds))
 colnames(pt) <- c("pseudoT1", "pseudoT2")
 names <- rownames(pt)
-
-#Add pseudotime values to Seurat 
-CD8$pt1 <- pt$pseudoT1
-CD8$pt2 <- pt$pseudoT2
- 
+   
 #Extract the curves coordinates
 curve1 <- slingCurves(sds)[[1]]
 curve2 <- slingCurves(sds)[[2]]
- 
-dev.off()
-pdf("./DataAnalysis/CellType/CD8.Tcells/slingshot/Trajectory2.pdf", height=4, width=4)
-plot(reducedDim(sds), col = cell_colors_clust, pch = 16, cex = 0.5)
-lines(sds, lwd = 2, col = 'black')
-dev.off()
    
-plot(reducedDim(sds), col = cell_colors_clust, pch = 16, cex = 0.25)
-lines(sds, lwd = 2, type = 'lineages', col = 'black')
-#UMAP coordinates for the 1st lineage
-p1 <- FeaturePlot(CD8, c("pt1")) + ggtitle("Lineage 1")
-UMAP_1 <- p1$data$UMAP_1
-UMAP_2 <- p1$data$UMAP_2
+#Create dataframe with UMAP coordinates
+umap_df <- reducedDim(sceCD8, "UMAP")
+   
+#Create dataframe with UMAP coordinates and pseudotimes
+df <- cbind(umap_df, pt)
+   
+#Plot according to pseudotime values  (pseudoT1)
+p1 <- ggplot(df, aes(UMAP_1, UMAP_2)) +
+   geom_point(aes_string(color = df$pseudoT1),
+              alpha = 0.5) +
+   scale_colour_viridis_c() +
+   theme_minimal() + labs(colour = "Pseudotime") 
+   
    
 #Plot 1st lineage
 tiff("./plots/traj1.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
 p1 <- p1 + geom_path(aes(x = UMAP_1, y = UMAP_2), data = curve1$s[curve1$ord, ] %>% as.data.frame(),
-                    col = "black", size = 1, arrow = arrow(), lineend = "round") + scale_color_viridis_c() +  labs(color = "Pseudotime")
-p1
+                     col = "black", size = 1, arrow = arrow(), lineend = "round") + scale_color_viridis_c() +  labs(color = "Pseudotime") + ggtitle("Senescence")
 dev.off()
    
-#UMAP coordinates for the second lineage
-p2 <- FeaturePlot(CD8, c("pt2")) + ggtitle("Lineage 2") 
-UMAP_1 <- p2$data$UMAP_1
-UMAP_2 <- p2$data$UMAP_2
+#Plot according to pseudotime (pseudoT2)
+p2 <- ggplot(df, aes(UMAP_1, UMAP_2)) +
+   geom_point(aes_string(color = df$pseudoT2),
+              alpha = 0.5) +
+   scale_colour_viridis_c() +
+   theme_minimal() + labs(colour = "Pseudotime")
    
 tiff("./plots/traj2.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
 p2 <- p2 +   geom_path(aes(x = UMAP_1, y = UMAP_2), data = curve2$s[curve2$ord, ] %>% as.data.frame(),
-                      col = "black", size = 1, arrow = arrow(), lineend = "round") + scale_color_viridis_c() +  labs(color = "Pseudotime")
-p
+                       col = "black", size = 1, arrow = arrow(), lineend = "round") + scale_color_viridis_c() +  labs(color = "Pseudotime") + ggtitle("Exhaustion")
 dev.off()
    
 tiff("./plots/traj.tiff", width = 8*130, height = 5*300, res = 150, pointsize = 5)  
 plot_grid(p1, p2, ncol = 1, align = "h")
 dev.off()
-   
    
 ## Identifying differentially expressed genes along a trajectory
 # select the ptime values 
