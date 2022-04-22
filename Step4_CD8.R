@@ -21,18 +21,25 @@ library(ggplot2)
 library(cowplot)
 library(RColorBrewer)
 library(magrittr)
+library(tidyr)
+library(mclust)
 library(SCPA)
 library(dyno)
 library(scRepertoire)
 library(SeuratWrappers)
 library(monocle3)
 library(hdf5r)
+library(circlize)
+library(ComplexHeatmap)
 library(tibble)
 library(msigdbr)
-library(miloR)
 library(statmod)
 library(scater)
 library(SCPA)
+library(mgcv)
+library(gam)
+library(tradeSeq)
+library(condiments)
 library(stringr)
 library(scuttle)
 library(destiny)
@@ -399,7 +406,7 @@ rownames(tex) <- sapply(ss2, .subset, 2)
 pathways <- msigdbr::msigdbr("Homo sapiens", "H") %>%
   format_pathways()
 
-pathways <- "/home/francesco/Documents/AML_project/scRNA_AMLproj/combined_metabolic_pathways.csv"
+pathways <- "combined_metabolic_pathways.csv"
 
 sen_tex <- compare_pathways(samples = list(sen, tex), 
                             pathways = pathways)
@@ -457,55 +464,47 @@ for(i in cell_types) {
     set_colnames(c("Pathway", paste(i, "qval", sep = "_")))
 }
 
-# DiffusionMap
-logcounts <- GetAssayData(CD8, "data")
+scpa_out <- scpa_out %>% 
+   reduce(full_join, by = "Pathway") %>% 
+   set_colnames(gsub(colnames(.), pattern = " ", replacement = "_")) %>%
+   select(c("Pathway", grep("_qval", colnames(.)))) %>%
+   filter_all(any_vars(. > 2)) %>%
+   column_to_rownames("Pathway")
 
-# transpose matrix (genes as columns, cells as rows)
-input_matrix <- t(logcounts[VariableFeatures(CD8), ])
-rm(list=setdiff(ls(), "CD8")
-   # generate a diffusion map
-   dm <- DiffusionMap(as.matrix(input_matrix))
-   
-   # store the diffusion map as a custom dimensional reduction in the Seurat object
-   CD8[["DM"]] <- CreateDimReducObject(embeddings = dm@eigenvectors, key = "DM_", assay = DefaultAssay(CD8))
-   
-   # plot the diffusion map
-   DimPlot(CD8, reduction = "DM") + ggtitle("Diffusion Map")
-   DimPlot(CD8, reduction = "DM", split.by = "group_id") + ggtitle("Diffusion Map")
-   
-   # calculate the diffusion pseudotime (DPT)
-   dpt <- DPT(dm)
-   
-   # color single cells on diffusion map plot according to DPT
-   p1 <- plot(dpt, 1:2) + ggtitle("Diffusion Pseudotime (DPT)")
-   p1
-   
-   # create data.frame for easy plotting of DPT
-   #tmp <- data.frame(DC1 = dm$DC1,
-   #DC2 = dm$DC2,
-   #timepoint = cell_type,
-   #dpt = dpt$DPT1)
-   
-   # color single cells on diffusion map plot according to timepoint
-   #p2 <- ggplot(tmp, aes(x = DC1, y = DC2, colour = timepoint)) +
-   #geom_point() +
-   #theme_classic() +
-   #ggtitle("Timepoint")
-   
-   #plot_grid(p1, p2, align = "hv", ncol = 2, rel_widths = c(1, 1))
-   
-   # plot timepoint vs. DPT
-   #ggplot(tmp, aes(timepoint, dpt, colour = timepoint)) +
-   #geom_point() + 
-   #geom_jitter() +
-   #ggtitle ("Timepoint vs. DPT")
+blood_paths <- c("HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_INFLAMMATORY_RESPONSE",
+                 "HALLMARK_COMPLEMENT", "HALLMARK_IL6_JAK_STAT3_SIGNALING",
+                 "HALLMARK_IL2_STAT5_SIGNALING", "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+                 "HALLMARK_MTORC1_SIGNALING", "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+                 "HALLMARK_MYC_TARGETS_V1", "HALLMARK_OXIDATIVE_PHOSPHORYLATION")
+
+position <- which(rownames(scpa_out) %in% blood_paths)
+row_an <- rowAnnotation(Genes = anno_mark(at = which(rownames(scpa_out) %in% blood_paths),
+                                          labels = rownames(scpa_out)[position],
+                                          labels_gp = gpar(fontsize = 7),
+                                          link_width = unit(2.5, "mm"),
+                                          padding = unit(1, "mm"),
+                                          link_gp = gpar(lwd = 0.5)))
+col_hm <- colorRamp2(colors = c("blue", "white", "red"), breaks = c(0, 3, 6))
+
+
+Heatmap(scpa_out,
+        col = col_hm,
+        name = "Qval",
+        show_row_names = F,
+        right_annotation = row_an,
+        column_names_gp = gpar(fontsize = 8),
+        border = T,
+        column_km = 3,
+        row_km = 3, 
+        column_labels = c("HD", "NonRes", "Res"))
+
 #TRAJECTORY INFERENCE using Slingshot
 clusterLabels <- CD8@active.ident
 sceCD8 <- as.SingleCellExperiment(CD8, assay = "RNA")
 sds <- slingshot(sceCD8, clusterLabels = clusterLabels, 
                  allow.breaks = TRUE, stretch = 2, reducedDim = "UMAP", start.clus = "Naive") #Calcualting the trajectory
 sds <- SlingshotDataSet(sds)
-   
+saveRDS(sds, "sds")
 #Create dataframe pseudotimes
 pt <- as.data.frame(slingPseudotime(sds))
 colnames(pt) <- c("pseudoT1", "pseudoT2")
@@ -550,7 +549,115 @@ dev.off()
 tiff("./plots/traj.tiff", width = 8*130, height = 5*300, res = 150, pointsize = 5)  
 plot_grid(p1, p2, ncol = 1, align = "h")
 dev.off()
-   
+
+#One dimensional clustering with Mclust
+pt1 <- pt %>% select(pseudoT1) %>% drop_na()
+pt1.mc <- Mclust(pt1, G=1:4)$classification %>% 
+   as.data.frame() %>% 
+   set_colnames("milestone") %>% rownames_to_column("cell")
+
+df_mile <- cbind(pt, pt1.mc[, "milestone"][match(rownames(pt), pt1.mc$cell)]) %>% set_colnames(c("pt1", "pt2", "milestone1"))
+CD8$milestone1 <- df_mile$milestone1
+
+CD8_pseudo1 <- list()
+for (i in 1:max(df_mile$milestone1, na.rm = TRUE)) {
+   CD8_pseudo1[[i]] <- seurat_extract(CD8, meta1 = "milestone1", value_meta1 = i)
+}
+
+pathways <- "combined_metabolic_pathways.csv"
+
+CD8_pseudo1 <- lapply(CD8_pseudo1, function(x) {
+   ss <- strsplit(rownames(x), ".", fixed = TRUE)
+   rownames(x) <- sapply(ss, .subset, 2)
+   return(x)})
+
+CD8.meta.pt1 <- compare_pathways(samples = CD8_pseudo1, 
+                                   pathways = pathways)
+
+CD8.meta.pt1 <- CD8.meta.pt1 %>%
+   data.frame() %>%
+   select(Pathway, qval) %>% remove_rownames() %>% 
+   column_to_rownames("Pathway")
+View(CD8.meta.pt1)
+col_hm <- colorRamp2(colors = c("white", "red"), breaks = c(0, max(CD8.meta.pt1$qval)))
+
+paths <- c("REACTOME_METABOLISM_OF_AMINO_ACIDS_AND_DERIVATIVES", "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+           "REACTOME_METABOLISM_OF_CARBOHYDRATES", "REACTOME_FATTY_ACID_METABOLISM", "HALLMARK_FATTY_ACID_METABOLISM",
+           "REACTOME_SYNTHESIS_OF_VERY_LONG_CHAIN_FATTY_ACYL_COAS", "REACTOME_CITRIC_ACID_CYCLE_TCA_CYCLE")
+position <- which(rownames(CD8.meta.pt1) %in% paths)
+
+row_an <- HeatmapAnnotation(Genes = anno_mark(at = which(rownames(CD8.meta.pt1) %in% paths),
+                                          labels = rownames(CD8.meta.pt1)[position],
+                                          labels_gp = gpar(fontsize = 5),
+                                          link_width = unit(0, "mm")))
+                                          #link_gp = gpar(lwd = 0.5)))
+
+#Annotation to be added(!!!)
+Heatmap(t(CD8.meta.pt1),
+        name = "Qvalue",
+        col = col_hm,
+        bottom_annotation = row_an,
+        border = T,
+        rect_gp = gpar(col = "white", lwd = 0.1),
+        heatmap_height = unit(10, "cm"),
+        show_column_dend = F,
+        show_row_names = F,
+        show_column_names = F,
+        column_title = "Metabolic pathway (senescence trajectory") 
+
+pt2 <- pt %>% select(pseudoT2) %>% drop_na()
+pt2.mc <- Mclust(pt2, G=1:4)$classification %>% 
+   as.data.frame() %>% 
+   set_colnames("milestone") %>% rownames_to_column("cell")
+
+df_mile2 <- cbind(pt, pt2.mc[, "milestone"][match(rownames(pt), pt2.mc$cell)]) %>% set_colnames(c("pt1", "pt2", "milestone2"))
+CD8$milestone2 <- df_mile2$milestone2
+
+CD8_pseudo2 <- list()
+for (i in 1:max(df_mile2$milestone2, na.rm = TRUE)) {
+   CD8_pseudo2[[i]] <- seurat_extract(CD8, meta1 = "milestone2", value_meta1 = i)
+}
+
+pathways <- "combined_metabolic_pathways.csv"
+
+CD8_pseudo2 <- lapply(CD8_pseudo2, function(x) {
+   ss <- strsplit(rownames(x), ".", fixed = TRUE)
+   rownames(x) <- sapply(ss, .subset, 2)
+   return(x)})
+
+CD8.meta.pt2 <- compare_pathways(samples = CD8_pseudo2, 
+                                 pathways = pathways)
+
+CD8.meta.pt2 <- CD8.meta.pt2 %>%
+   data.frame() %>%
+   select(Pathway, qval) %>% remove_rownames() %>% 
+   column_to_rownames("Pathway")
+
+col_hm <- colorRamp2(colors = c("white", "red"), breaks = c(0, max(CD8.meta.pt2$qval)))
+
+paths <- c("REACTOME_METABOLISM_OF_AMINO_ACIDS_AND_DERIVATIVES", "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+           "REACTOME_METABOLISM_OF_CARBOHYDRATES", "REACTOME_FATTY_ACID_METABOLISM", "HALLMARK_FATTY_ACID_METABOLISM",
+           "REACTOME_SYNTHESIS_OF_VERY_LONG_CHAIN_FATTY_ACYL_COAS", "REACTOME_CITRIC_ACID_CYCLE_TCA_CYCLE")
+position <- which(rownames(CD8.meta.pt2) %in% paths)
+
+row_an <- HeatmapAnnotation(Genes = anno_mark(at = which(rownames(CD8.meta.pt2) %in% paths),
+                                              labels = rownames(CD8.meta.pt2)[position],
+                                              labels_gp = gpar(fontsize = 5),
+                                              link_width = unit(0, "mm")))
+
+
+Heatmap(t(CD8.meta.pt2),
+        name = "Qvalue",
+        col = col_hm,
+        bottom_annotation = row_an,
+        border = T,
+        rect_gp = gpar(col = "white", lwd = 0.1),
+        heatmap_height = unit(10, "cm"),
+        show_column_dend = F,
+        show_row_names = F,
+        show_column_names = F,
+        column_title = "Metabolic pathway (exhaustion trajectory)")
+
 ## Identifying differentially expressed genes along a trajectory
 # select the ptime values 
 sceCD8$pt1 <- pt$pseudoT1
@@ -568,14 +675,14 @@ genes_to_test <- VariableFeatures(CD8)[1:1000]
 # get log normalized data to test
 cnts <- logcounts(sceCD8)[genes_to_test, lineage_cells]
    
-# fit a GAM with a loess term for pseudotime
+# fit a GAM with a loess term for pseudotime pt1
 gam.pval <- apply(cnts, 1, function(z){
  d <- data.frame(z = z, ptime = pt1)
  tmp <- suppressWarnings(gam(z ~ lo(pt1), data=d))
  p <- summary(tmp)[4][[1]][1, 5]
  p
 })
-   
+
 # adjust pvalues 
 res <- tibble(
  id = names(gam.pval),
@@ -584,7 +691,7 @@ res <- tibble(
  arrange(qval)
    
 head(res)
-   
+
 # get log normalized counts 
 to_plot <- as.matrix(logcounts(sceCD8)[res$id[1:100], lineage_cells])
    
@@ -607,13 +714,19 @@ Heatmap(to_plot,
 
 #Fit negative binomial model
 set.seed(5)
-icMat <- evaluateK(counts = counts(sceCD8), sds = sds, k = 3:10, 
-                  nGenes = 200, verbose = T)
- 
+par(mar=c(1,1,1,1))
+icMat <- evaluateK(counts = counts(sceCD8), sds = sds, k = 3:7, 
+                  nGenes = 100, verbose = T, plot = TRUE)
+print(icMat[1:2,])
 set.seed(7)
-counts <- CD8[["RNA"]]@counts
-###Try to run on all the genes on the server 
-sce <- fitGAM(counts = counts, sds = sds, nknots = 6, genes = 1:2000, verbose = TRUE, sce=TRUE)
+
+###Parallel computinh
+BPPARAM <- BiocParallel::bpparam()
+BPPARAM # lists current options
+BPPARAM$workers <- 2
+
+#fitGAM
+sce <- fitGAM(counts = counts(sceCD8), sds = sds, nknots = 5, verbose = TRUE, BPPARAM = BPPARAM)
    
 # plot our Slingshot lineage trajectories, this time illustrating the new tradeSeq knots
 tiff("./plots/traj.tiff", width = 5*500, height = 5*300, res = 300, pointsize = 5)     
@@ -626,174 +739,118 @@ dev.off()
 assoRes <- associationTest(sce)
 head(assoRes)
    
-#Progenitor markers
-startRes <- startVsEndTest(sce)
-oStart <- order(startRes$waldStat, decreasing = TRUE)
-sigGeneStart <- names(sce)[oStart[10]]
-plotSmoothers(sce, counts, gene = sigGeneStart)
-   
 ### Discovering differentiated cell type markers
 # discover marker genes for the differentiated cell types
-endRes <- diffEndTest(sce, pairwise = TRUE)
+endRes <- diffEndTest(sce) #Nothing interesting with this analysis
 head(endRes)
    
 o <- order(endRes$waldStat, decreasing = TRUE)
-sigGene <- names(sce)[o[1]]
-plotSmoothers(sceCD8, counts, sigGene)
+sigGene <- names(sce)[o[2]]
+plotSmoothers(sce, counts(sce), sigGene)
    
 plotGeneCount(sds, counts, gene = sigGene)
    
-earlyDERes <- earlyDETest(sceCD8, knots = c(4, 6))
+earlyDERes <- earlyDETest(sce, knots = c(3, 4))
 oEarly <- order(earlyDERes$waldStat, decreasing = TRUE)
 head(rownames(earlyDERes)[oEarly])
-plotSmoothers(sce, counts, gene = rownames(earlyDERes)[oEarly][1])
-plotGeneCount(sds, counts, gene = rownames(earlyDERes)[oEarly][1])
-   
+plotSmoothers(sce, counts(sce), gene = rownames(earlyDERes)[oEarly][3])
+plotGeneCount(sds, counts(sce), gene = rownames(earlyDERes)[oEarly][3])
+
+#Genes with different expression patterns
+patternRes <- patternTest(sce)
+oPat <- order(patternRes$waldStat, decreasing = TRUE)
+rownames(patternRes)[oPat][1]
+
+tiff("./plots/DEtrajGZMK.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][233]) + ggtitle ("GZMK")
+dev.off()
+
+tiff("./plots/DEtrajGZMKumap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][1]) + ggtitle ("GZMK")
+dev.off()
+
+tiff("./plots/DEtrajGNLY.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][7]) + ggtitle ("GNLY")
+dev.off()
+
+tiff("./plots/DEtrajGNLYumap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][7]) + ggtitle ("GNLY")
+dev.off()
+
+tiff("./plots/DEtrajPRF1.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][8]) + ggtitle ("PRF1")
+dev.off()
+
+tiff("./plots/DEtrajPRF1umap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][8]) + ggtitle ("PRF1")
+dev.off()
+
+tiff("./plots/DEtrajGZMB.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][9]) + ggtitle ("GZMB")
+dev.off()
+
+tiff("./plots/DEtrajGZMBumap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][9]) + ggtitle ("GZMB")
+dev.off()
+
 #Finish analysis whole dataset
-   
-#Trajectory by condition
-   
-   
-library(devtools)
-install_github("epurdom/clusterExperiment")
-   
-nPointsClus <- 20
-clusPat <- clusterExpressionPatterns(sce, nPoints = nPointsClus,
-                                    genes = rownames(counts)[1:100])
-   
+sce.cond <- subset(sce,,group_id %in% c("Res", "NonRes"))
+sds <- slingshot(sce.cond, reducedDim = 'UMAP', clusterLabels = colData(sce.cond)$ident,
+                    start.clus = 'Tnaive', approx_points = 150)
+sds <- SlingshotDataSet(sds)
+
+#Trajectory by condition (compare Res and NonRes)
 df <- bind_cols(
- as.data.frame(reducedDims(sce)$UMAP),
- as.data.frame(colData(sce))
+ as.data.frame(reducedDim(sce.cond, "UMAP")),
+ as.data.frame(colData(sce.cond))
 ) %>%
  sample_frac(1)
-   
-   
+
 scores <- condiments::imbalance_score(
  Object = df %>% select(UMAP_1, UMAP_2) %>% as.matrix(), 
- conditions = df$group_id,
- k = 20, smooth = 40)
+ conditions = df$group_id)
    
-df$scores <- scores$scaled_scores
+df$scores <- scores$scores
 p3 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = scores)) +
  geom_point(size = .7) +
  scale_color_viridis_c(option = "C") +
  labs(col = "Scores")
 p3
-   
-#Analyze two condition only
-sceCD8 <- as.SingleCellExperiment(CD8, assay = "RNA")
-sceCD8 <- slingshot(sceCD8, reducedDim = 'UMAP', clusterLabels = colData(sceCD8)$ident,
-                   start.clus = 'Tnaive', approx_points = 150)
-df <- bind_cols(
- as.data.frame(reducedDims(sce)$UMAP),
- as.data.frame(colData(sce))
-) %>%
- sample_frac(1)
-   
-#topologyTest(SlingshotDataSet(sceCD8), condition = sceCD8$group_id, rep = 100, methods = "Classifier", threshs = .01)
-slingPseudotime_1 <- sce$slingPseudotime_1
-slingPseudotime_2 <- sce$slingPseudotime_2
-df <- cbind(df, slingPseudotime_1, slingPseudotime_2)
- 
-curve <- slingCurves(sceCD8)[[1]]
-   
-p4 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = slingPseudotime_1)) +
- geom_point(size = .7) +
- scale_color_viridis_c() +
- labs(col = "Pseudotime") +
- geom_path(data = curve$s[curve$ord, ] %>% as.data.frame(),
-           col = "black", size = 1.5)
+
+df$scaled_scores <- scores$scaled_scores
+p4 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = scaled_scores)) +
+  geom_point(size = .7) +
+  scale_color_viridis_c(option = "C") +
+  labs(col = "Scores")
 p4
-   
-#Try Clustering using RSEC, clusterExperiment from TradeSeq workflow
-#Condiments
-df <- bind_cols(
- as.data.frame(reducedDims(sceCD8)$UMAP),
- as.data.frame(colData(sceCD8))
-) %>%
- sample_frac(1)
-   
-scores <- condiments::imbalance_score(
- Object = df %>% select(UMAP_1, UMAP_2) %>% as.matrix(), 
- conditions = df$group_id,
- k = 20, smooth = 40)
-df$scores <- scores$scaled_scores
-p3 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = scores)) +
- geom_point(size = .7) +
- scale_color_viridis_c(option = "C") +
- labs(col = "Scores")
-p3
-   
-sceCD8 <- slingshot(sceCD8, reducedDim = 'UMAP',
-                   clusterLabels = sceCD8$cluster_id,
-                   start.clus = 'Naive', approx_points = 100)
- 
-set.seed(821)
-#topologyTest(SlingshotDataSet(sceCD8), sceCD8$group_id, rep = 100,
-#methods = "KS_mean", threshs = .01)
-   
-curve <- slingCurves(sceCD8)[[1]]
-p4 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = pt1)) +
- geom_point(size = .7) +
- scale_color_viridis_c() +
- labs(col = "Pseudotime") +
- geom_path(data = curve$s[curve$ord, ] %>% as.data.frame(),
-           col = "black", size = 1.5)
-p4
-   
-p5 <- ggplot(df, aes(x = pt1)) +
- geom_density(alpha = .8, aes(fill = group_id), col = "transparent") +
- geom_density(aes(col = group_id), fill = "transparent",
-              guide = FALSE, size = 1.5) +
- labs(x = "Pseudotime", fill = "group_id") +
- guides(col = FALSE, fill = guide_legend(
-   override.aes = list(size = 1.5, col = c("#7FC97F", "#BEAED4", "#AA4371"))
- )) +
- scale_fill_brewer(palette = "Accent") +
- scale_color_brewer(palette = "Accent")
-   
-p5
-   
-p6 <- ggplot(df, aes(x = pt2)) +
- geom_density(alpha = .8, aes(fill = group_id), col = "transparent") +
- geom_density(aes(col = group_id), fill = "transparent",
-              guide = FALSE, size = 1.5) +
- labs(x = "Pseudotime", fill = "group_id") +
- guides(col = FALSE, fill = guide_legend(
-   override.aes = list(size = 1.5, col = c("#7FC97F", "#BEAED4", "#AA4371"))
- )) +
- scale_fill_brewer(palette = "Accent") +
- scale_color_brewer(palette = "Accent")
-   
-p6
 
-progressionTest(SlingshotDataSet(sceCD8), conditions = sceCD8$group_id)
-sceCD8 <- fitGAM(counts = as.matrix(assays(sceCD8)$counts),
-                sds = sds, genes = 1:1000,
-                conditions = factor(colData(sceCD8)$group_id),
-                nknots = 6, verbose = TRUE)
-   
-sceCD8 <- readRDS("scripts/sceCD8_AM.rds")
-mean(rowData(sceCD8)$tradeSeq$converged)
-   
-rowData(sceCD8)$assocRes <- associationTest(sceCD8, lineages = TRUE, l2fc = log2(2))
-assocRes <- rowData(sceCD8)$assocRes
+topologyTest(SlingshotDataSet(sds), sce.cond$group_id, rep = 100,
+             methods = "KS_mean", threshs = .01)
+knitr::kable(top_res)
 
-NRGenes <-  rownames(assocRes)[
-  which(p.adjust(assocRes$pvalue_lineage1_conditionNonRes, "fdr") <= 0.05)
-]
-RGenes <-  rownames(assocRes)[
-  which(p.adjust(assocRes$pvalue_lineage1_conditionRes, "fdr") <= 0.05)
-]
+psts <- slingPseudotime(sds) %>%
+  as.data.frame() %>%
+  mutate(cells = rownames(.),
+         conditions = df$group_id) %>%
+  pivot_longer(starts_with("Lineage"), values_to = "pseudotime", names_to = "lineages")
 
-HDGenes <-  rownames(assocRes)[
-  which(p.adjust(assocRes$pvalue_lineage1_conditionHD, "fdr") <= 0.05)
-]
+ggplot(psts, aes(x = pseudotime, fill = conditions)) +
+  geom_density(alpha = .5) +
+  scale_fill_brewer(type = "qual") +
+  facet_wrap(~lineages) +
+  theme(legend.position = "bottom")
 
-length(RGenes)
-length(NRGenes)
-length(HDGenes)
-UpSetR::upset(fromList(list(Res = RGenes, NonRes = NRGenes, HD = HDGenes)))
+prog_res <- progressionTest(sds, conditions = df$group_id, global = TRUE, lineages = TRUE)
+knitr::kable(prog_res)
+
+df$weight_1 <- slingCurveWeights(sds, as.probs = TRUE)[, 1]
+ggplot(df, aes(x = weight_1, fill = group_id)) +
+  geom_density(alpha = .5) +
+  scale_fill_brewer(type = "qual") +
+  labs(x = "Curve weight for the first lineage")
+
+dif_res <- differentiationTest(sds, conditions = df$group_id, global = FALSE, pairwise = TRUE)
+knitr::kable(dif_res)
 
 ### based on mean smoother
 yhatSmooth <- predictSmooth(sceCD8, gene = RGenes, nPoints = 50, tidy = FALSE)
@@ -1013,6 +1070,7 @@ for (i in 1:max(mile_group$milestone)) {
   CD8_pseudo[[i]] <- seurat_extract(CD8, meta1 = "milestone", value_meta1 = i)
 }
 
+View(CD8_pseudo)
 pathways <- "combined_metabolic_pathways.csv"
 
 CD8_meta <- compare_pathways(samples = CD8_pseudo, 
