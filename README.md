@@ -3,12 +3,12 @@ scRNAseq in AML patients and HD
 # scRNAseq_step1
 This script is on preprocessing of scRNAseq data. Later on I'll use Seurat to analyze my data. Here though I use singlecellexperiment because it allows me to use the doubletfinder package (https://github.com/chris-mcginnis-ucsf/DoubletFinder). 
 In summary the script does the followings:
-#1) rename the genes
-#2) Add metadata
-#3) Remove undetected genes
-#3) Infer and remove doublets
-#4) Calculate QC metrics with diagnostic plots
-#5) Remove outliers
+1) rename the genes
+2) Add metadata
+3) Remove undetected genes
+3) Infer and remove doublets
+4) Calculate QC metrics with diagnostic plots
+5) Remove outliers
 # scRNAseq_step2
 This script does the followings:
 1) Normalize and find the most variable features 
