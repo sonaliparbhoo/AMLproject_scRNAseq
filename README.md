@@ -20,7 +20,7 @@ This script does the followings:
 4) Computes the k.param nearest neighbors and then identifies clusters of cells by a shared nearest neighbor (SNN) modularity optimization based clustering algorithm (Louvain). 
 5) Adds the data on TCR (it's a VDJ scRNAseq) to the Seurat object, for this I used scRepertoire: http://127.0.0.1:22003/library/scRepertoire/doc/vignette.html 
 # scRNAseq_step3
-This script does the following:
+This script does the followings:
 1) Pick the resolution for the clustering
 2) Using scGate (https://github.com/carmonalab/scGate) creates a gating model to subset the different cell subsets. This can be done also in Seurat but I prefer scGate because you can also exclude negative margers to make the model more precise and subset the object on the output 
 3) According to the expression and the DGE (FindAllMarkers) labels the clusters and then creates a seurat object for each subset
