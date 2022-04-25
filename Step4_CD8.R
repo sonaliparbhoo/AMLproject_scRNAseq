@@ -35,7 +35,6 @@ library(tibble)
 library(msigdbr)
 library(statmod)
 library(scater)
-library(SCPA)
 library(mgcv)
 library(gam)
 library(tradeSeq)
@@ -504,7 +503,7 @@ sceCD8 <- as.SingleCellExperiment(CD8, assay = "RNA")
 sds <- slingshot(sceCD8, clusterLabels = clusterLabels, 
                  allow.breaks = TRUE, stretch = 2, reducedDim = "UMAP", start.clus = "Naive") #Calcualting the trajectory
 sds <- SlingshotDataSet(sds)
-saveRDS(sds, "sds")
+
 #Create dataframe pseudotimes
 pt <- as.data.frame(slingPseudotime(sds))
 colnames(pt) <- c("pseudoT1", "pseudoT2")
@@ -720,81 +719,72 @@ icMat <- evaluateK(counts = counts(sceCD8), sds = sds, k = 3:7,
 print(icMat[1:2,])
 set.seed(7)
 
-###Parallel computinh
+###Parallel computing
 BPPARAM <- BiocParallel::bpparam()
 BPPARAM # lists current options
 BPPARAM$workers <- 2
 
 #fitGAM
-sce <- fitGAM(counts = counts(sceCD8), sds = sds, nknots = 5, verbose = TRUE, BPPARAM = BPPARAM)
-   
+sceCD8 <- fitGAM(counts = counts(sceCD8), sds = sds, nknots = 5, verbose = TRUE, BPPARAM = BPPARAM)
+
 # plot our Slingshot lineage trajectories, this time illustrating the new tradeSeq knots
 tiff("./plots/traj.tiff", width = 5*500, height = 5*300, res = 300, pointsize = 5)     
 plotGeneCount(curve = sds, counts = counts,
              clusters = CD8@active.ident,
-             models = sce)
+             models = sceCD8)
 dev.off()
    
 #Association test
-assoRes <- associationTest(sce)
+assoRes <- associationTest(sceCD8)
 head(assoRes)
    
 ### Discovering differentiated cell type markers
 # discover marker genes for the differentiated cell types
-endRes <- diffEndTest(sce) #Nothing interesting with this analysis
+endRes <- diffEndTest(sceCD8) #Nothing interesting with this analysis
 head(endRes)
    
 o <- order(endRes$waldStat, decreasing = TRUE)
-sigGene <- names(sce)[o[2]]
-plotSmoothers(sce, counts(sce), sigGene)
+sigGene <- names(sceCD8)[o[2]]
+plotSmoothers(sceCD8, counts(sceCD8), sigGene) 
    
-plotGeneCount(sds, counts, gene = sigGene)
-   
-earlyDERes <- earlyDETest(sce, knots = c(3, 4))
+plotGeneCount(sds, counts(sceCD8), gene = sigGene)
+
+# Marker genes between specific roots   
+earlyDERes <- earlyDETest(sceCD8, knots = c(3, 4))
 oEarly <- order(earlyDERes$waldStat, decreasing = TRUE)
 head(rownames(earlyDERes)[oEarly])
-plotSmoothers(sce, counts(sce), gene = rownames(earlyDERes)[oEarly][3])
-plotGeneCount(sds, counts(sce), gene = rownames(earlyDERes)[oEarly][3])
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(earlyDERes)[oEarly][1])
+plotGeneCount(sds, counts(sceCD8), gene = rownames(earlyDERes)[oEarly][3])
 
-#Genes with different expression patterns
-patternRes <- patternTest(sce)
+#Genes with different expression patterns (most interesting part)
+patternRes <- patternTest(sceCD8)
 oPat <- order(patternRes$waldStat, decreasing = TRUE)
-rownames(patternRes)[oPat][1]
+head(rownames(patternRes)[oPat])
 
 tiff("./plots/DEtrajGZMK.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][233]) + ggtitle ("GZMK")
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][1]) + ggtitle ("GZMK")
 dev.off()
 
-tiff("./plots/DEtrajGZMKumap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][1]) + ggtitle ("GZMK")
+tiff("./plots/DEtrajNKG7.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][2]) + ggtitle ("GNLY")
 dev.off()
 
 tiff("./plots/DEtrajGNLY.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][7]) + ggtitle ("GNLY")
-dev.off()
-
-tiff("./plots/DEtrajGNLYumap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][7]) + ggtitle ("GNLY")
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][7]) + ggtitle ("GNLY")
 dev.off()
 
 tiff("./plots/DEtrajPRF1.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][8]) + ggtitle ("PRF1")
-dev.off()
-
-tiff("./plots/DEtrajPRF1umap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][8]) + ggtitle ("PRF1")
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][8]) + ggtitle ("PRF1")
 dev.off()
 
 tiff("./plots/DEtrajGZMB.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotSmoothers(sce, counts(sce), gene = rownames(patternRes)[oPat][9]) + ggtitle ("GZMB")
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][9]) + ggtitle ("GZMB")
 dev.off()
 
-tiff("./plots/DEtrajGZMBumap.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotGeneCount(sds, counts(sce), gene = rownames(patternRes)[oPat][9]) + ggtitle ("GZMB")
-dev.off()
-
-#Finish analysis whole dataset
-sce.cond <- subset(sce,,group_id %in% c("Res", "NonRes"))
+#DGE between lineages conditions according to pseudotime
+#First consider only Res and NonRes 
+sce <- as.SingleCellExperiment(CD8) #restart before running Slingshot and fitGAM
+sce.cond <- subset(sce,,group_id %in% c("Res", "NonRes")) #filter out HD
 sds <- slingshot(sce.cond, reducedDim = 'UMAP', clusterLabels = colData(sce.cond)$ident,
                     start.clus = 'Tnaive', approx_points = 150)
 sds <- SlingshotDataSet(sds)
@@ -852,77 +842,198 @@ ggplot(df, aes(x = weight_1, fill = group_id)) +
 dif_res <- differentiationTest(sds, conditions = df$group_id, global = FALSE, pairwise = TRUE)
 knitr::kable(dif_res)
 
+#Run fitGAM according to conditions and plot heatmaps 
+BPPARAM <- BiocParallel::bpparam()
+BPPARAM # lists current options
+BPPARAM$workers <- 10
+
+set.seed(5)
+icMat <- evaluateK(counts(sce), sds = sds, k = 3:7, nGenes = 100, verbose = T, conditions = factor(colData(sce)$group_id), plot = T)
+
+set.seed(3)
+sce <-fitGAM(counts = counts(sce), sds = sds, nknots = 5, conditions = factor(colData(sce)$group_id), verbose = TRUE, BPPARAM = BPPARAM)
+
+#Differential expression between lineages
+patRes <- patternTest(sce, l2fc = log2(2))
+patRes$padj <- p.adjust(patRes$pvalue, "fdr")
+mean(patRes$padj <= 0.05, na.rm = TRUE)
+
+sum(patRes$padj <= 0.05, na.rm = TRUE)
+
+patternGenes <- rownames(patRes)[patRes$padj <= 0.05]
+patternGenes <- patternGenes[!is.na(patternGenes)]
+
 ### based on mean smoother
-yhatSmooth <- predictSmooth(sceCD8, gene = RGenes, nPoints = 50, tidy = FALSE)
-heatSmooth <- pheatmap(t(scale(t(yhatSmooth[, 1:50]))),
-                       cluster_cols = FALSE,
-                       show_rownames = FALSE, 
-                       show_colnames = FALSE)
+#DGE NonRes lineage1 vs lineage2
+yhatSmooth <- predictSmooth(sce, gene = patternGenes, nPoints = 50, tidy = TRUE) %>%
+  mutate(yhat = log1p(yhat)) %>%
+  group_by(gene) %>%
+  mutate(yhat = scales::rescale(yhat)) %>%
+  filter(condition == "NonRes") %>%
+  select(-condition) %>%
+  ungroup()
 
-## the hierarchical trees constructed here, can also be used for 
-## clustering of the genes according to their average expression pattern.
-cl <- sort(cutree(heatSmooth$tree_row, k = 6))
-table(cl)
+heatSmooth_Lineage1 <- pheatmap(
+  yhatSmooth %>%
+    filter(lineage == 1) %>%
+    select(-lineage) %>%
+    arrange(-time) %>%
+    pivot_wider(names_from = time, values_from = yhat) %>%
+    select(-gene),
+  cluster_cols = FALSE, show_rownames = FALSE, show_colnames = FALSE,
+  main = "Lineage 1", legend = FALSE, silent = TRUE
+)
 
-######Retrieve sceCD8 with UMAP dimred
+heatSmooth_Lineage2 <- pheatmap(
+  (yhatSmooth %>%
+     filter(lineage == 2) %>%
+     select(-lineage) %>%
+     arrange(-time) %>%
+     pivot_wider(names_from = time, values_from = yhat) %>%
+     select(-gene))[heatSmooth_Lineage1@row_order, ],
+  cluster_cols = FALSE, cluster_rows = FALSE,
+  show_rownames = FALSE, show_colnames = FALSE, main = "Lineage 2",
+  legend = FALSE, silent = TRUE 
+)
 
-####To be improved!!
+heatSmooth_Lineage1
+heatSmooth_Lineage2
 
+#DGE Responders libeage1 vs lineage2
+yhatSmooth <- predictSmooth(sce, gene = patternGenes, nPoints = 50, tidy = TRUE) %>%
+  mutate(yhat = log1p(yhat)) %>%
+  group_by(gene) %>%
+  mutate(yhat = scales::rescale(yhat)) %>%
+  filter(condition == "NonRes") %>%
+  select(-condition) %>%
+  ungroup()
 
-## C7 category is according to gene ontology grouping: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
-geneSets <- msigdbr(species = "Homo sapiens", category = "C7")
-### filter background to only include genes that we assessed.
-geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+heatSmooth_Lineage1 <- pheatmap(
+  yhatSmooth %>%
+    filter(lineage == 1) %>%
+    select(-lineage) %>%
+    arrange(-time) %>%
+    pivot_wider(names_from = time, values_from = yhat) %>%
+    select(-gene),
+  cluster_cols = FALSE, show_rownames = FALSE, show_colnames = FALSE,
+  main = "Lineage 1", legend = FALSE, silent = TRUE
+)
 
-genenames <- gsub(".*[.]", "", names(sceCD8))
-geneSets <- geneSets[geneSets$gene_symbol %in% genenames,]
-m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
-stats <- assocRes$waldStat_lineage1_conditionRes
-names(stats) <- gsub(".*[.]", "", rownames(assocRes))
-eaRes <- fgsea(pathways = m_list, stats = stats, nperm = 5e4, minSize = 10)
+heatSmooth_Lineage2 <- pheatmap(
+  (yhatSmooth %>%
+     filter(lineage == 2) %>%
+     select(-lineage) %>%
+     arrange(-time) %>%
+     pivot_wider(names_from = time, values_from = yhat) %>%
+     select(-gene))[heatSmooth_Lineage1@row_order, ],
+  cluster_cols = FALSE, cluster_rows = FALSE,
+  show_rownames = FALSE, show_colnames = FALSE, main = "Lineage 2",
+  legend = FALSE, silent = TRUE 
+)
 
-ooEA <- order(eaRes$pval, decreasing = FALSE)
-kable(head(eaRes[ooEA, 1:3], n = 20))
+heatSmooth_Lineage1
+heatSmooth_Lineage2
 
 #Differential expression between conditions
-condRes <- conditionTest(sceCD8, l2fc = log2(2))
+condRes <- conditionTest(sce, l2fc = log2(2), lineages = TRUE)
 condRes$padj <- p.adjust(condRes$pvalue, "fdr")
 mean(condRes$padj <= 0.05, na.rm = TRUE)
+
 sum(condRes$padj <= 0.05, na.rm = TRUE)
 
 conditionGenes <- rownames(condRes)[condRes$padj <= 0.05]
 conditionGenes <- conditionGenes[!is.na(conditionGenes)]
 
-scales <- brewer.pal(3, "Accent")[1:6]
+scales <- brewer.pal(3, "Accent")[1:4]
 
 # plot genes
 oo <- order(condRes$waldStat, decreasing = TRUE)
 
 # most significant gene
-p6 <- plotSmoothers(sceCD8, assays(sceCD8)$counts,
-                    gene = rownames(assays(sceCD8)$counts)[oo[1]],
+p1 <- plotSmoothers(sce, assays(sce)$counts,
+                    gene = rownames(assays(sce)$counts)[oo[1]],
                     alpha = 1, border = TRUE, curvesCols = scales) +
   scale_color_manual(values = scales) +
-  ggtitle(rownames(assays(sceCD8)$counts)[oo[3]])
-p6
+  ggtitle(rownames(assays(sce)$counts)[oo[1]])
+
+p1
+
+# Second most significant gene
+p2 <- plotSmoothers(sce, assays(sce)$counts,
+                    gene = rownames(assays(sce)$counts)[oo[2]],
+                    alpha = 1, border = TRUE, curvesCols = scales) +
+  scale_color_manual(values = scales) +
+  ggtitle(rownames(assays(sce)$counts)[oo[2]])
+
+p2
+
 ### based on mean smoother
-yhatSmooth <- predictSmooth(sceCD8, gene = conditionGenes, nPoints = 50, tidy = FALSE) %>%
+condRes$padj_lineage1 <- p.adjust(condRes$pvalue_lineage1, "fdr")
+conditionGenes_lineage1 <- rownames(condRes)[condRes$padj_lineage1 <= 0.05]
+conditionGenes_lineage1 <- conditionGenes_lineage1[!is.na(conditionGenes_lineage1)]
+
+yhatSmooth <- predictSmooth(sce, gene = conditionGenes_lineage1, nPoints = 50, tidy = FALSE) %>%
   log1p()
-
-yhatSmoothScaled <- t(apply(yhatSmooth,1, scales::rescale))
-heatSmooth <- pheatmap(yhatSmoothScaled[, 51:100],
-                       cluster_cols = FALSE,
-                       show_rownames = FALSE, show_colnames = FALSE, legend = FALSE,
-                       silent = TRUE
-)
-matchingHeatmap <- pheatmap(yhatSmoothScaled[heatSmooth$tree_row$order, 1:50],
-                            cluster_cols = FALSE, cluster_rows = FALSE,
-                            show_rownames = FALSE, show_colnames = FALSE, main = "",
-                            legend = FALSE, silent = TRUE 
+yhatSmoothScaled <- t(apply(yhatSmooth[, c(1:50, 101:150)], 1, scales::rescale))
+heatSmooth_NonRes <- pheatmap(yhatSmoothScaled[, 1:50],
+                              cluster_cols = FALSE,
+                              show_rownames = FALSE, show_colnames = FALSE, main = "NonRes", legend = FALSE,
+                              silent = TRUE
 )
 
-p9 <- plot_grid(heatSmooth_TGF[[4]], matchingHeatmap_mock[[4]], ncol = 2)
-p9
+matchingHeatmap_Res <- pheatmap(yhatSmoothScaled[heatSmooth_NonRes@row_order, 51:100],
+                                cluster_cols = FALSE, cluster_rows = FALSE,
+                                show_rownames = FALSE, show_colnames = FALSE, main = "Res",
+                                legend = FALSE, silent = TRUE
+)
+
+heatSmooth_NonRes
+matchingHeatmap_Res
+
+condRes$padj_lineage2 <- p.adjust(condRes$pvalue_lineage2, "fdr")
+conditionGenes_lineage2 <- rownames(condRes)[condRes$padj_lineage2 <= 0.05]
+conditionGenes_lineage2 <- conditionGenes_lineage2[!is.na(conditionGenes_lineage2)]
+
+yhatSmooth <- predictSmooth(sce, gene = conditionGenes_lineage2, nPoints = 50, tidy = FALSE) %>%
+  log1p()
+yhatSmoothScaled <- t(apply(yhatSmooth[, c(51:100, 151:200)], 1, scales::rescale))
+colnames(yhatSmoothScaled)
+heatSmooth_NonRes <- pheatmap(yhatSmoothScaled[, 1:50],
+                              cluster_cols = FALSE,
+                              show_rownames = FALSE, show_colnames = FALSE, main = "NonRes", legend = FALSE,
+                              silent = TRUE
+)
+
+matchingHeatmap_Res <- pheatmap(yhatSmoothScaled[heatSmooth_NonRes$tree_row$order, 51:100],
+                                cluster_cols = FALSE, cluster_rows = FALSE,
+                                show_rownames = FALSE, show_colnames = FALSE, main = "Res",
+                                legend = FALSE, silent = TRUE
+)
+
+p10 <- plot_grid(heatSmooth_NonRes[[4]], matchingHeatmap_Res[[4]],
+                 NULL, NULL, NULL, ncol = 2, rel_widths = c(1.4, 1, 1), rel_heights = c(10, 1)) +
+  draw_text("Lineage 2", x = .5, y = .5)
+p10
+
+plot_grid(p9, p10, ncol = 2)
+
+##Fix the error
+## C7 category is according to gene ontology grouping: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
+geneSets <- msigdbr(species = "Homo sapiens", category = "C7")
+### filter background to only include genes that we assessed.
+geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+ss1 <- strsplit(rownames(sce), ".", fixed=TRUE)
+genenames <- sapply(ss1, .subset, 2)
+geneSets <- geneSets[geneSets$gene_symbol %in% genenames,]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+condRes <- conditionTest(sce, l2fc = log2(2))
+statsCond <- condRes$waldStat
+ss2 <- strsplit(rownames(condRes), ".", fixed=TRUE)
+names(statsCond) <- sapply(ss1, .subset, 2)
+eaRes <- fgsea(pathways = m_list, stats = statsCond, nperm = 5e4, minSize = 10)
+ooEA <- order(eaRes$pval, decreasing = FALSE)
+kable(head(eaRes[ooEA, 1:3], n = 20))
+##????
 
 #Velocity using velocyto.R
 #Load in the files
@@ -1024,57 +1135,6 @@ scv$pl$velocity_embedding_stream(adata, basis="umap", color = "seurat_clusters")
 #calculate latent time
 scv$tl$latent_time(adata)
 scv$pl$scatter(adata, color='latent_time', color_map='gnuplot', size=80)
-
-
-#Dyno trajectories metabolism
-df <- as.matrix(CD8[["RNA"]]@data)
-var_genes <- names(sort(apply(df, 1, var), decreasing = TRUE))[1:1000]
-
-counts <- Matrix::t(as(as.matrix(CD8@assays$RNA@counts[var_genes,]), 'sparseMatrix'))
-expression <- Matrix::t(as(as.matrix(CD8@assays$RNA@data[var_genes,]), 'sparseMatrix'))
-
-ds <- wrap_expression(expression = expression,
-                      counts = counts)
-model <- infer_trajectory(ds, dimred = "umap", method = dynmethods::ti_slingshot(),  verbose = T)
-
-model <- model %>% 
-  add_dimred(dimred = as.matrix(CD8@reductions$umap@cell.embeddings),
-             expression_source = ds$expression)
-
-plot_dimred(model, expression_source = ds$expression, )
-
-
-plot_dimred(model,
-            "pseudotime", 
-            expression_source = ds$expression,
-            pseudotime = calculate_pseudotime(model), 
-            hex_cells = F,
-            plot_trajectory = T, 
-            size_cells = 1, alpha_cells = 0.8) + 
-  theme(aspect.ratio = 1)
-
-plot_dimred(model, 
-            expression_source = ds$expression,
-            grouping = group_onto_nearest_milestones(model), 
-            hex_cells = F,
-            plot_trajectory = T, 
-            size_cells = 1, alpha_cells = 0.8) + 
-  theme(aspect.ratio = 1)
-
-mile_group <- data.frame(group_onto_nearest_milestones(model)) %>%
-  set_colnames("milestone") %>%
-  rownames_to_column("cell")
-CD8$milestone <- mile_group$milestone
-CD8_pseudo <- list()
-for (i in 1:max(mile_group$milestone)) {
-  CD8_pseudo[[i]] <- seurat_extract(CD8, meta1 = "milestone", value_meta1 = i)
-}
-
-View(CD8_pseudo)
-pathways <- "combined_metabolic_pathways.csv"
-
-CD8_meta <- compare_pathways(samples = CD8_pseudo, 
-                             pathways = pathways)
 
 #Clonotype analysis
 #Delete HD (we have VDJ only for responders and nonresponders)
