@@ -42,6 +42,7 @@ library(condiments)
 library(stringr)
 library(scuttle)
 library(destiny)
+library(SeuratDisk)
 
 setwd("~/Documents/AML_project/scRNA_AMLproj")
 
@@ -393,40 +394,36 @@ DoHeatmap(CD8, features = top100$gene, label = TRUE)
 #See if there are metabolic changes at the trajectory split
 #(https://jackbibby1.github.io/SCPA/articles/quick_start.html)
 CD8$cluster_id <- CD8@active.ident
-sen <- seurat_extract(CD8, meta1 = "cluster_id", value_meta1 = "Senescent-like",)
-tex <- seurat_extract(CD8, meta1 = "cluster_id", value_meta1 = "Tex")
+DimPlot(CD8)
+tex_pat <- seurat_extract(CD8, meta1 = "cluster_id", value_meta1 = c("Tex"))
+sen_pat <- seurat_extract(CD8, meta1 = "cluster_id", value_meta1 = c("Senescent-like"))
+ss1 <- strsplit(rownames(tex_pat), ".", fixed=TRUE)
+rownames(tex_pat) <- sapply(ss1, .subset, 2)
 
-ss1 <- strsplit(rownames(sen), ".", fixed=TRUE)
-rownames(sen) <- sapply(ss1, .subset, 2)
-
-ss2 <- strsplit(rownames(tex), ".", fixed = TRUE)
-rownames(tex) <- sapply(ss2, .subset, 2)
+ss2 <- strsplit(rownames(sen_pat), ".", fixed = TRUE)
+rownames(sen_pat) <- sapply(ss2, .subset, 2)
 
 pathways <- msigdbr::msigdbr("Homo sapiens", "H") %>%
   format_pathways()
 
 pathways <- "combined_metabolic_pathways.csv"
 
-sen_tex <- compare_pathways(samples = list(sen, tex), 
+tex_sen <- compare_pathways(samples = list(tex_pat, sen_pat), 
                             pathways = pathways)
-
-plot_rank(scpa_out = int_intGZMK, 
-          pathway = "HALLMARK_INFLAMMATORY_RESPONSE", 
-          base_point_size = 2, 
-          highlight_point_size = 3)
-
-sen_tex <- sen_tex %>%
+tex_sen <- sen_tex
+tex_sen <- tex_sen %>%
   mutate(color = case_when(FC > 5 & adjPval < 0.01 ~ '#6dbf88',
                            FC < 5 & FC > -5 & adjPval < 0.01 ~ '#84b0f0',
                            FC < -5 & adjPval < 0.01 ~ 'mediumseagreen',
                            FC < 5 & FC > -5 & adjPval > 0.01 ~ 'black'))
-
+View(tex_sen)
 aa_path <- sen_tex %>% 
-  filter(grepl(pattern = "reactome_respiratory", ignore.case = T, x = Pathway))
+  filter(grepl(pattern = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", ignore.case = T, x = Pathway))
 
-ggplot(aa_path, aes(-FC, qval)) +
+tiff("./plots/oxp.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
+ggplot(tex_sen, aes(-FC, qval)) +
   geom_vline(xintercept = c(-5, 5), linetype = "dashed", col = 'black', lwd = 0.3) +
-  geom_point(cex = 2.6, shape = 21, fill = sen_tex$color, stroke = 0.3) +
+  geom_point(cex = 2.6, shape = 21, fill =tex_sen$color, stroke = 0.3) +
   geom_point(data = aa_path, shape = 21, cex = 2.8, fill = "orangered2", color = "black", stroke = 0.3) +
   xlim(-20, 80) +
   ylim(0, 11) +
@@ -434,7 +431,8 @@ ggplot(aa_path, aes(-FC, qval)) +
   ylab("Qval") +
   theme(panel.background = element_blank(),
         panel.border = element_rect(fill = NA),
-        aspect.ratio = 1)
+        aspect.ratio = 1) + ggtitle("Hallmark Oxphos")
+dev.off()
 
 CD8$cluster_id <- CD8@active.ident
 cell_types <- unique(CD8$cluster_id)
@@ -549,6 +547,9 @@ tiff("./plots/traj.tiff", width = 8*130, height = 5*300, res = 150, pointsize = 
 plot_grid(p1, p2, ncol = 1, align = "h")
 dev.off()
 
+##Metabolic changes along trajectories
+#Lineage one
+
 #One dimensional clustering with Mclust
 pt1 <- pt %>% select(pseudoT1) %>% drop_na()
 pt1.mc <- Mclust(pt1, G=1:4)$classification %>% 
@@ -577,9 +578,10 @@ CD8.meta.pt1 <- CD8.meta.pt1 %>%
    data.frame() %>%
    select(Pathway, qval) %>% remove_rownames() %>% 
    column_to_rownames("Pathway")
-View(CD8.meta.pt1)
+
 col_hm <- colorRamp2(colors = c("white", "red"), breaks = c(0, max(CD8.meta.pt1$qval)))
 
+#Select metabolic pathways
 paths <- c("REACTOME_METABOLISM_OF_AMINO_ACIDS_AND_DERIVATIVES", "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
            "REACTOME_METABOLISM_OF_CARBOHYDRATES", "REACTOME_FATTY_ACID_METABOLISM", "HALLMARK_FATTY_ACID_METABOLISM",
            "REACTOME_SYNTHESIS_OF_VERY_LONG_CHAIN_FATTY_ACYL_COAS", "REACTOME_CITRIC_ACID_CYCLE_TCA_CYCLE")
@@ -604,6 +606,8 @@ Heatmap(t(CD8.meta.pt1),
         show_column_names = F,
         column_title = "Metabolic pathway (senescence trajectory") 
 
+#Lineage 2
+#One dimensional clustering with Mclust
 pt2 <- pt %>% select(pseudoT2) %>% drop_na()
 pt2.mc <- Mclust(pt2, G=1:4)$classification %>% 
    as.data.frame() %>% 
@@ -658,59 +662,6 @@ Heatmap(t(CD8.meta.pt2),
         column_title = "Metabolic pathway (exhaustion trajectory)")
 
 ## Identifying differentially expressed genes along a trajectory
-# select the ptime values 
-sceCD8$pt1 <- pt$pseudoT1
-sceCD8$pt2 <- pt$pseudoT2
- 
-# get cells in that lineage
-lineage_cells <- colnames(sceCD8)[!is.na(sceCD8$pt1)]
- 
-# remove values for cells not in the lineage
-pt1 <- sceCD8$pt1[!is.na(sceCD8$pt1)]
-   
-# just test variable genes to save some time
-genes_to_test <- VariableFeatures(CD8)[1:1000]
-   
-# get log normalized data to test
-cnts <- logcounts(sceCD8)[genes_to_test, lineage_cells]
-   
-# fit a GAM with a loess term for pseudotime pt1
-gam.pval <- apply(cnts, 1, function(z){
- d <- data.frame(z = z, ptime = pt1)
- tmp <- suppressWarnings(gam(z ~ lo(pt1), data=d))
- p <- summary(tmp)[4][[1]][1, 5]
- p
-})
-
-# adjust pvalues 
-res <- tibble(
- id = names(gam.pval),
- pvals = gam.pval,
- qval = p.adjust(gam.pval, method = "fdr")) %>% 
- arrange(qval)
-   
-head(res)
-
-# get log normalized counts 
-to_plot <- as.matrix(logcounts(sceCD8)[res$id[1:100], lineage_cells])
-   
-# arrange cells by pseudotime
-ptime_order <- colnames(to_plot)[order(pt1)]
-   
-# add useful annotations
-annotations <- colData(sceCD8)[lineage_cells, 
-                              c("pt1", 
-                                "ident", 
-                                "group_id")] %>% 
- as.data.frame()
-ha <- HeatmapAnnotation(df = annotations)
-   
-Heatmap(to_plot,
-       column_order = ptime_order,
-       show_column_names = FALSE,
-       show_row_names = FALSE,
-       top_annotation = ha)
-
 #Fit negative binomial model
 set.seed(5)
 par(mar=c(1,1,1,1))
@@ -766,7 +717,7 @@ plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][1]) + gg
 dev.off()
 
 tiff("./plots/DEtrajNKG7.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][2]) + ggtitle ("GNLY")
+plotSmoothers(sceCD8, counts(sceCD8), gene = rownames(patternRes)[oPat][2]) + ggtitle ("NKG7")
 dev.off()
 
 tiff("./plots/DEtrajGNLY.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
@@ -783,9 +734,9 @@ dev.off()
 
 #DGE between lineages conditions according to pseudotime
 #First consider only Res and NonRes 
-sce <- as.SingleCellExperiment(CD8) #restart before running Slingshot and fitGAM
+sce <- as.SingleCellExperiment(CD8, assay = "RNA") #restart before running Slingshot and fitGAM
 sce.cond <- subset(sce,,group_id %in% c("Res", "NonRes")) #filter out HD
-sds <- slingshot(sce.cond, reducedDim = 'UMAP', clusterLabels = colData(sce.cond)$ident,
+sds <- slingshot(sce, reducedDim = 'UMAP', clusterLabels = colData(sce)$ident,
                     start.clus = 'Tnaive', approx_points = 150)
 sds <- SlingshotDataSet(sds)
 
@@ -1017,7 +968,7 @@ p10
 
 plot_grid(p9, p10, ncol = 2)
 
-##Fix the error
+##Fix the error (GSEA does not work)
 ## C7 category is according to gene ontology grouping: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4707969/pdf/nihms-743907.pdf
 geneSets <- msigdbr(species = "Homo sapiens", category = "C7")
 ### filter background to only include genes that we assessed.
@@ -1035,7 +986,7 @@ ooEA <- order(eaRes$pval, decreasing = FALSE)
 kable(head(eaRes[ooEA, 1:3], n = 20))
 ##????
 
-#Velocity using velocyto.R
+#Velocity
 #Load in the files
 ld.list <- list.files("velocity", pattern = "loom", all.files = TRUE)
 ld <- lapply(ld.list, function(x){
@@ -1066,75 +1017,14 @@ CD8[["spliced"]] <- spliced
 CD8[["unspliced"]] <- unspliced
 CD8[["ambiguous"]] <- ambiguous
 
-CD8 <- RunVelocity(CD8, deltaT = 1, kCells = 25, fit.quantile = 0.02)
-ident.colors <- (scales::hue_pal())(n = length(x = levels(x = CD8)))
-names(x = ident.colors) <- levels(x = CD8)
-cell.colors <- ident.colors[Idents(object = CD8)]
-names(x = cell.colors) <- colnames(x = CD8)
-par(mar=c(1,1,1,1))
-show.velocity.on.embedding.cor(emb = Embeddings(object = CD8, reduction = "umap"), vel = Tool(object = CD8, 
-                                                                                              slot = "RunVelocity"), n = 200, scale = "sqrt", cell.colors = ac(x = cell.colors, alpha = 0.5), 
-                               cex = 0.8, arrow.scale = 3, show.grid.flow = TRUE, min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1, 
-                               do.par = FALSE, cell.border.alpha = 0.1)
-
-#Running velocity using scvelo
-#bash
-#pip install -U scvelo
-
-# bash
-#conda activate r-velocity
-#python
-#>>> import scvelo as scv
-
-use_condaenv("r-velocity", required = TRUE)
-scv <- import("scvelo")
-
 #Assign the spliced assay to the RNA assay and put it as default
 CD8[['RNA']] <- CD8[["spliced"]]
 DefaultAssay(CD8) <- "RNA"
+CD8$celltype <- CD8@active.ident
 
 #save seurat and convert into h5ad
 SaveH5Seurat(CD8, filename = "CD8scv.h5Seurat")
-Convert("CD8scv.h5Seurat", dest = "h5ad")
-
-#read the h5ad file
-adata <- scv$read("CD8scv.h5ad")
-adata #check the adata file
-
-## get embedding
-emb <- data.frame(adata$obsm['X_umap'])
-clusters <- CD8@active.ident
-rownames(emb) <- names(clusters)
-
-## get jackbibby1.github.io/SCPA/clusters, convert to colors
-col <- rainbow(length(levels(clusters)), s=0.8, v=0.8)
-cell.cols <- col[clusters]
-names(cell.cols) <- names(clusters)
-
-## simple plot
-par(mar=c(1,1,1,1))
-plot(emb, col=cell.cols, pch=16,
-     xlab='UMAP X', ylab='UMAP Y')
-legend(x=4, y=-3.4, 
-       legend=levels(clusters),
-       col=col, 
-       pch=16)
-
-## run scvelo dynamic model
-scv$pp$filter_and_normalize(adata, min_shared_counts=20)
-scv$pp$moments(adata, method='hnsw') ## normalize and compute moments
-scv$tl$recover_dynamics(adata) ## model
-scv$tl$velocity(adata, mode = 'dynamical')
-scv$tl$velocity_graph(adata)
-
-#adata$write('data/scvelo.h5ad', compression='gzip')
-#adata = scv$read('data/scvelo.h5ad')
-
-scv$pl$velocity_embedding_stream(adata, basis="umap", color = "seurat_clusters")
-
-#calculate latent time
-scv$tl$latent_time(adata)
-scv$pl$scatter(adata, color='latent_time', color_map='gnuplot', size=80)
+Convert("CD8scv.h5Seurat", dest = "h5ad") #--> continue this using Python (script velocity.py in the Github repo)
 
 #Clonotype analysis
 #Delete HD (we have VDJ only for responders and nonresponders)
@@ -1302,13 +1192,96 @@ tiff("./plots/overlap.tiff", width = 5*350, height = 5*300, res = 300, pointsize
 clonalOverlap(comb2, cloneCall="aa", method="overlap")
 dev.off()
 
-save(list = ls(), file ="scRNAseq_CD8_step4.rds")
-load("scRNAseq_CD8_step4.rds")
+#Look for epitope specific TCRs
+library(Trex)
 
+##Setting up Tensor Flow
+library(reticulate)
+conda_create("r-reticulate") ##If first time using reticulate
+use_condaenv(condaenv = "r-reticulate", required = TRUE)
+library(tensorflow)
 
-save(CD8, model, file = "CD8.rds")
-load("CD8.rds")
+install_tensorflow()
 
+Trex_vectors <- maTrex(CD8, AA.properties = "AF")
+qplot(data = as.data.frame(Trex_vectors), Trex_2, Trex_3) + theme_classic()
 
+CD8 <- runTrex(CD8, chains = "TRB", AA.properties = "KF", reduction.name = "Trex.KF")
 
+#Generating UMAP from Trex Neighbors
+CD8 <- RunUMAP(CD8, reduction = "Trex.KF", dims = 1:30, reduction.name = 'Trex.umap', 
+               reduction.key = 'trexUMAP_')
 
+#Trex UMAP
+plot1 <- DimPlot(CD8, reduction = "Trex.umap") + NoLegend()
+plot2 <- DimPlot(CD8, group.by = "CTaa", reduction = "Trex.umap") + 
+  scale_color_viridis(discrete = TRUE, option = "B") + 
+  NoLegend()
+
+plot1 + plot2
+
+#Cluster clones
+CD8<- clonalCommunity(CD8, reduction.name = "Trex.KF", cluster.parameter = KNNGraphParam(k=20))
+
+#Run Harmony and new UMAP for RNA
+CD8 <- RunHarmony(CD8, "trex.clusters", verbose = FALSE, assay.use = "integrated")
+CD8 <- RunUMAP(CD8, reduction = "harmony", dims = 1:20, reduction.key = "RFS_UMAP_", reduction.name = "regressClone")
+
+plot3 <- DimPlot(CD8, 
+                 reduction = "umap", 
+                 group.by = "CTaa") + 
+  NoLegend() + 
+  scale_color_viridis(option="B", discrete = TRUE)
+
+plot4 <- DimPlot(CD8, 
+                 reduction = "regressClone", 
+                 group.by = "CTaa") + 
+  NoLegend() + 
+  scale_color_viridis(option="B", discrete = TRUE)
+
+plot5 + plot6
+
+CoNGA.seurat <- CoNGAfy(CD8, 
+                        method = "dist")
+
+CoNGA.seurat <- runTrex(CoNGA.seurat, 
+                        AA.properties = "KF", 
+                        reduction.name = "Trex.KF")
+
+CoNGA.seurat <- CoNGA.seurat %>%
+  FindNeighbors(reduction = "Trex.KF") %>%
+  FindClusters(algorithm = 3)
+
+CoNGA.seurat <- RunUMAP(CoNGA.seurat, 
+                        reduction = "Trex.KF", 
+                        dims = 1:20, 
+                        reduction.name = 'Trex.umap', 
+                        reduction.key = 'trexUMAP_')
+
+DimPlot(CoNGA.seurat, reduction = "Trex.umap") + NoLegend()
+
+CoNGA.seurat <- annotateDB(CoNGA.seurat, 
+                           chains = "TRB")
+
+tiff("./plots/ep_species.tiff", width = 8*1000, height = 5*600, res = 150, pointsize = 5)  
+DimPlot(CoNGA.seurat, 
+        reduction = "Trex.umap", 
+        group.by = "TRB_Epitope.species")
+dev.off()
+
+DimPlot(CoNGA.seurat, 
+        reduction = "Trex.umap", 
+        group.by = "TRB_Epitope.sequence")
+
+CD8 <- annotateDB(CD8, chains = "TRB")
+
+tiff("./plots/ep_species.tiff", width = 8*1000, height = 5*600, res = 150, pointsize = 5)  
+DimPlot(CD8, reduction = "umap", group.by = "TRB_Epitope.species") +theme(element_text(size = 8))
+dev.off()
+
+tiff("./plots/UMAP.tiff", width = 8*150, height = 5*150, res = 150, pointsize = 5)  
+DimPlot(CD8, reduction = "umap", label = TRUE)
+dev.off()
+
+saveRDS(CoNGA.seurat, "conga")
+saveRDS(CD8, "CD8ep")
