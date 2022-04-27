@@ -1282,6 +1282,3 @@ dev.off()
 tiff("./plots/UMAP.tiff", width = 8*150, height = 5*150, res = 150, pointsize = 5)  
 DimPlot(CD8, reduction = "umap", label = TRUE)
 dev.off()
-
-saveRDS(CoNGA.seurat, "conga")
-saveRDS(CD8, "CD8ep")
