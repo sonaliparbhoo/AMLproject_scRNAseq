@@ -35,5 +35,5 @@ In progress
 1) DGE along and between lineages and across conditions (Res, NonRes, HD)
 2) clonotype analysis
 
-# Velocity.py
+# Velocity
 This script use scVelo to infer velocity
