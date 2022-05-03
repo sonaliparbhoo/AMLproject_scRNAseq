@@ -396,6 +396,7 @@ df2 %>%
 DoHeatmap(CD8, features = top100$gene, label = TRUE)
 
 #Gene set enrichment analysis
+#Download geneset acidosis from harmonizome
 df.acidosis <- readxl::read_xlsx("harmonizome.xlsx")
 
 acidosis <- df.acidosis$acidosis
