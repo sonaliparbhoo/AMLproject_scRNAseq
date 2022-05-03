@@ -43,6 +43,11 @@ library(stringr)
 library(scuttle)
 library(destiny)
 library(SeuratDisk)
+library(cmapR)
+library(escape)
+library(dittoSeq)
+library(snow)
+library(UCell)
 
 setwd("~/Documents/AML_project/scRNA_AMLproj")
 
@@ -390,110 +395,62 @@ df2 %>%
 #Plot heatmap with top100 genes
 DoHeatmap(CD8, features = top100$gene, label = TRUE)
 
-#Single cell pathway analysis
-#See if there are metabolic changes at the trajectory split
-#(https://jackbibby1.github.io/SCPA/articles/quick_start.html)
-CD8$cluster_id <- CD8@active.ident
-DimPlot(CD8)
-tex_pat <- seurat_extract(CD8, meta1 = "cluster_id", value_meta1 = c("Tex"))
-sen_pat <- seurat_extract(CD8, meta1 = "cluster_id", value_meta1 = c("Senescent-like"))
-ss1 <- strsplit(rownames(tex_pat), ".", fixed=TRUE)
-rownames(tex_pat) <- sapply(ss1, .subset, 2)
+#Gene set enrichment analysis
+df.acidosis <- readxl::read_xlsx("harmonizome.xlsx")
 
-ss2 <- strsplit(rownames(sen_pat), ".", fixed = TRUE)
-rownames(sen_pat) <- sapply(ss2, .subset, 2)
+acidosis <- df.acidosis$acidosis
 
-pathways <- msigdbr::msigdbr("Homo sapiens", "H") %>%
-  format_pathways()
+gene.sets <- getGeneSets(library = "H")
+gene.sets$ACIDOSIS <- acidosis
 
-pathways <- "combined_metabolic_pathways.csv"
+sceCD8 <- as.SingleCellExperiment(CD8, assay = "RNA")
+ss1 <- strsplit(rownames(sceCD8), ".", fixed = TRUE)
+rownames(sceCD8) <- sapply(ss1, .subset, 2)
 
-tex_sen <- compare_pathways(samples = list(tex_pat, sen_pat), 
-                            pathways = pathways)
-tex_sen <- sen_tex
-tex_sen <- tex_sen %>%
-  mutate(color = case_when(FC > 5 & adjPval < 0.01 ~ '#6dbf88',
-                           FC < 5 & FC > -5 & adjPval < 0.01 ~ '#84b0f0',
-                           FC < -5 & adjPval < 0.01 ~ 'mediumseagreen',
-                           FC < 5 & FC > -5 & adjPval > 0.01 ~ 'black'))
-View(tex_sen)
-aa_path <- sen_tex %>% 
-  filter(grepl(pattern = "HALLMARK_OXIDATIVE_PHOSPHORYLATION", ignore.case = T, x = Pathway))
+ES <- enrichIt(obj = sceCD8, gene.sets = gene.sets, groups = 1000, cores = 6, method = "UCell")
 
-tiff("./plots/oxp.tiff", width = 8*100, height = 5*100, res = 150, pointsize = 5)  
-ggplot(tex_sen, aes(-FC, qval)) +
-  geom_vline(xintercept = c(-5, 5), linetype = "dashed", col = 'black', lwd = 0.3) +
-  geom_point(cex = 2.6, shape = 21, fill =tex_sen$color, stroke = 0.3) +
-  geom_point(data = aa_path, shape = 21, cex = 2.8, fill = "orangered2", color = "black", stroke = 0.3) +
-  xlim(-20, 80) +
-  ylim(0, 11) +
-  xlab("Enrichment") +
-  ylab("Qval") +
-  theme(panel.background = element_blank(),
-        panel.border = element_rect(fill = NA),
-        aspect.ratio = 1) + ggtitle("Hallmark Oxphos")
+CD8 <- AddMetaData(CD8, ES)
+
+CD8@meta.data$active.idents <- CD8@active.ident
+colorblind_vector <- colorRampPalette(rev(c("#0D0887FF", "#47039FFF", 
+                                            "#7301A8FF", "#9C179EFF", "#BD3786FF", "#D8576BFF",
+                                            "#ED7953FF","#FA9E3BFF", "#FDC926FF", "#F0F921FF")))
+
+dittoHeatmap(CD8, genes = NULL, metas = names(ES),
+             heatmap.colors = rev(colorblind_vector(50)),
+             annot.by = c("active.idents", "group_id"),
+             cluster_cols = TRUE,
+             fontsize = 7)
+
+tiff("./plots/hypoxia.tiff", width = 5*400, height = 5*300, res = 300, pointsize = 5)     
+dittoBoxPlot(CD8, "HALLMARK_HYPOXIA", group.by = "group_id", jitter.size = 0) + 
+  scale_fill_manual(values = colorblind_vector(6)) + theme_bw()
 dev.off()
 
-CD8$cluster_id <- CD8@active.ident
-cell_types <- unique(CD8$cluster_id)
-CD8_cond <- SplitObject(CD8, split.by = "group_id")
-pathways <- "h_k_r_go_pid_reg_wik.csv"
+tiff("./plots/hypoxia_RspTmp.tiff", width = 5*400, height = 5*300, res = 300, pointsize = 5)     
+dittoBoxPlot(CD8, "HALLMARK_HYPOXIA", group.by = "RespTmp", jitter.size = 0) + 
+  scale_fill_manual(values = colorblind_vector(6)) + theme_bw()
+dev.off()
 
-scpa_out <- list()
-for (i in cell_types) {
-  HD <- seurat_extract(CD8_cond$HD, 
-                       meta1 = "cluster_id", value_meta1 = i)
-  NonRes <- seurat_extract(CD8_cond$NonRes, 
-                           meta1 = "cluster_id", value_meta1 = i)
-  Res <-  seurat_extract(CD8_cond$Res, 
-                         meta1 = "cluster_id", value_meta1 = i)
-}
+tiff("./plots/hypoxia_idents.tiff", width = 5*400, height = 5*300, res = 300, pointsize = 5)     
+dittoBoxPlot(CD8, "HALLMARK_HYPOXIA", group.by = "active.idents", jitter.size = 0) + 
+  scale_fill_manual(values = colorblind_vector(6)) + theme_bw()
+dev.off()
 
-ls.cond <- list(HD, NonRes, Res)
-ls.cond <- lapply(ls.cond, function(x) {
-  ss <- strsplit(rownames(x), ".", fixed = TRUE)
-  rownames(x) <- sapply(ss, .subset, 2)
-  return(x)})
+tiff("./plots/acidosis.tiff", width = 5*400, height = 5*300, res = 300, pointsize = 5)     
+dittoBoxPlot(CD8, "Acidosis", group.by = "group_id", jitter.size = 0) + 
+  scale_fill_manual(values = colorblind_vector(6)) + theme_bw()
+dev.off()
 
-for(i in cell_types) {
-  scpa_out[[i]] <- compare_pathways(ls.cond, pathways) %>%
-    select(Pathway, qval) %>%
-    set_colnames(c("Pathway", paste(i, "qval", sep = "_")))
-}
+tiff("./plots/acidosis_RspTmp.tiff", width = 5*400, height = 5*300, res = 300, pointsize = 5)     
+dittoBoxPlot(CD8, "Acidosis", group.by = "RespTmp", jitter.size = 0) + 
+  scale_fill_manual(values = colorblind_vector(6)) + theme_bw()
+dev.off()
 
-scpa_out <- scpa_out %>% 
-   reduce(full_join, by = "Pathway") %>% 
-   set_colnames(gsub(colnames(.), pattern = " ", replacement = "_")) %>%
-   select(c("Pathway", grep("_qval", colnames(.)))) %>%
-   filter_all(any_vars(. > 2)) %>%
-   column_to_rownames("Pathway")
-
-blood_paths <- c("HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_INFLAMMATORY_RESPONSE",
-                 "HALLMARK_COMPLEMENT", "HALLMARK_IL6_JAK_STAT3_SIGNALING",
-                 "HALLMARK_IL2_STAT5_SIGNALING", "HALLMARK_INTERFERON_GAMMA_RESPONSE",
-                 "HALLMARK_MTORC1_SIGNALING", "HALLMARK_INTERFERON_ALPHA_RESPONSE",
-                 "HALLMARK_MYC_TARGETS_V1", "HALLMARK_OXIDATIVE_PHOSPHORYLATION")
-
-position <- which(rownames(scpa_out) %in% blood_paths)
-row_an <- rowAnnotation(Genes = anno_mark(at = which(rownames(scpa_out) %in% blood_paths),
-                                          labels = rownames(scpa_out)[position],
-                                          labels_gp = gpar(fontsize = 7),
-                                          link_width = unit(2.5, "mm"),
-                                          padding = unit(1, "mm"),
-                                          link_gp = gpar(lwd = 0.5)))
-col_hm <- colorRamp2(colors = c("blue", "white", "red"), breaks = c(0, 3, 6))
-
-
-Heatmap(scpa_out,
-        col = col_hm,
-        name = "Qval",
-        show_row_names = F,
-        right_annotation = row_an,
-        column_names_gp = gpar(fontsize = 8),
-        border = T,
-        column_km = 3,
-        row_km = 3, 
-        column_labels = c("HD", "NonRes", "Res"))
+tiff("./plots/acidosis_idents.tiff", width = 5*400, height = 5*300, res = 300, pointsize = 5)     
+dittoBoxPlot(CD8, "Acidosis", group.by = "active.idents", jitter.size = 0) + 
+  scale_fill_manual(values = colorblind_vector(6)) + theme_bw()
+dev.off()
 
 #TRAJECTORY INFERENCE using Slingshot
 clusterLabels <- CD8@active.ident
@@ -546,120 +503,6 @@ dev.off()
 tiff("./plots/traj.tiff", width = 8*130, height = 5*300, res = 150, pointsize = 5)  
 plot_grid(p1, p2, ncol = 1, align = "h")
 dev.off()
-
-##Metabolic changes along trajectories
-#Lineage one
-
-#One dimensional clustering with Mclust
-pt1 <- pt %>% select(pseudoT1) %>% drop_na()
-pt1.mc <- Mclust(pt1, G=1:4)$classification %>% 
-   as.data.frame() %>% 
-   set_colnames("milestone") %>% rownames_to_column("cell")
-
-df_mile <- cbind(pt, pt1.mc[, "milestone"][match(rownames(pt), pt1.mc$cell)]) %>% set_colnames(c("pt1", "pt2", "milestone1"))
-CD8$milestone1 <- df_mile$milestone1
-
-CD8_pseudo1 <- list()
-for (i in 1:max(df_mile$milestone1, na.rm = TRUE)) {
-   CD8_pseudo1[[i]] <- seurat_extract(CD8, meta1 = "milestone1", value_meta1 = i)
-}
-
-pathways <- "combined_metabolic_pathways.csv"
-
-CD8_pseudo1 <- lapply(CD8_pseudo1, function(x) {
-   ss <- strsplit(rownames(x), ".", fixed = TRUE)
-   rownames(x) <- sapply(ss, .subset, 2)
-   return(x)})
-
-CD8.meta.pt1 <- compare_pathways(samples = CD8_pseudo1, 
-                                   pathways = pathways)
-
-CD8.meta.pt1 <- CD8.meta.pt1 %>%
-   data.frame() %>%
-   select(Pathway, qval) %>% remove_rownames() %>% 
-   column_to_rownames("Pathway")
-
-col_hm <- colorRamp2(colors = c("white", "red"), breaks = c(0, max(CD8.meta.pt1$qval)))
-
-#Select metabolic pathways
-paths <- c("REACTOME_METABOLISM_OF_AMINO_ACIDS_AND_DERIVATIVES", "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
-           "REACTOME_METABOLISM_OF_CARBOHYDRATES", "REACTOME_FATTY_ACID_METABOLISM", "HALLMARK_FATTY_ACID_METABOLISM",
-           "REACTOME_SYNTHESIS_OF_VERY_LONG_CHAIN_FATTY_ACYL_COAS", "REACTOME_CITRIC_ACID_CYCLE_TCA_CYCLE")
-position <- which(rownames(CD8.meta.pt1) %in% paths)
-
-row_an <- HeatmapAnnotation(Genes = anno_mark(at = which(rownames(CD8.meta.pt1) %in% paths),
-                                          labels = rownames(CD8.meta.pt1)[position],
-                                          labels_gp = gpar(fontsize = 5),
-                                          link_width = unit(0, "mm")))
-                                          #link_gp = gpar(lwd = 0.5)))
-
-#Annotation to be added(!!!)
-Heatmap(t(CD8.meta.pt1),
-        name = "Qvalue",
-        col = col_hm,
-        bottom_annotation = row_an,
-        border = T,
-        rect_gp = gpar(col = "white", lwd = 0.1),
-        heatmap_height = unit(10, "cm"),
-        show_column_dend = F,
-        show_row_names = F,
-        show_column_names = F,
-        column_title = "Metabolic pathway (senescence trajectory") 
-
-#Lineage 2
-#One dimensional clustering with Mclust
-pt2 <- pt %>% select(pseudoT2) %>% drop_na()
-pt2.mc <- Mclust(pt2, G=1:4)$classification %>% 
-   as.data.frame() %>% 
-   set_colnames("milestone") %>% rownames_to_column("cell")
-
-df_mile2 <- cbind(pt, pt2.mc[, "milestone"][match(rownames(pt), pt2.mc$cell)]) %>% set_colnames(c("pt1", "pt2", "milestone2"))
-CD8$milestone2 <- df_mile2$milestone2
-
-CD8_pseudo2 <- list()
-for (i in 1:max(df_mile2$milestone2, na.rm = TRUE)) {
-   CD8_pseudo2[[i]] <- seurat_extract(CD8, meta1 = "milestone2", value_meta1 = i)
-}
-
-pathways <- "combined_metabolic_pathways.csv"
-
-CD8_pseudo2 <- lapply(CD8_pseudo2, function(x) {
-   ss <- strsplit(rownames(x), ".", fixed = TRUE)
-   rownames(x) <- sapply(ss, .subset, 2)
-   return(x)})
-
-CD8.meta.pt2 <- compare_pathways(samples = CD8_pseudo2, 
-                                 pathways = pathways)
-
-CD8.meta.pt2 <- CD8.meta.pt2 %>%
-   data.frame() %>%
-   select(Pathway, qval) %>% remove_rownames() %>% 
-   column_to_rownames("Pathway")
-
-col_hm <- colorRamp2(colors = c("white", "red"), breaks = c(0, max(CD8.meta.pt2$qval)))
-
-paths <- c("REACTOME_METABOLISM_OF_AMINO_ACIDS_AND_DERIVATIVES", "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
-           "REACTOME_METABOLISM_OF_CARBOHYDRATES", "REACTOME_FATTY_ACID_METABOLISM", "HALLMARK_FATTY_ACID_METABOLISM",
-           "REACTOME_SYNTHESIS_OF_VERY_LONG_CHAIN_FATTY_ACYL_COAS", "REACTOME_CITRIC_ACID_CYCLE_TCA_CYCLE")
-position <- which(rownames(CD8.meta.pt2) %in% paths)
-
-row_an <- HeatmapAnnotation(Genes = anno_mark(at = which(rownames(CD8.meta.pt2) %in% paths),
-                                              labels = rownames(CD8.meta.pt2)[position],
-                                              labels_gp = gpar(fontsize = 5),
-                                              link_width = unit(0, "mm")))
-
-
-Heatmap(t(CD8.meta.pt2),
-        name = "Qvalue",
-        col = col_hm,
-        bottom_annotation = row_an,
-        border = T,
-        rect_gp = gpar(col = "white", lwd = 0.1),
-        heatmap_height = unit(10, "cm"),
-        show_column_dend = F,
-        show_row_names = F,
-        show_column_names = F,
-        column_title = "Metabolic pathway (exhaustion trajectory)")
 
 ## Identifying differentially expressed genes along a trajectory
 #Fit negative binomial model
